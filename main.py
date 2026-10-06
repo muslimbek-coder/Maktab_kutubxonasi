@@ -415,7 +415,7 @@ def me(authorization: str = Header("")):
         raise HTTPException(401, "Kirish kerak")
     return u
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def index():
     return FileResponse("static/index.html")
 

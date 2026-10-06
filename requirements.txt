@@ -1,0 +1,6 @@
+aiogram
+fastapi
+uvicorn
+python-dotenv
+pydantic
+psycopg[binary,pool]

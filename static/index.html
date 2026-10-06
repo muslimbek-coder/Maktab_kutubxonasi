@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maktab kutubxonasi</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&display=swap">
+<style>
+:root{--bg:#e9eeea;--card:#fbfcfa;--ink:#14231f;--mut:#55665f;--line:#cfd9d3;--acc:#17483f;--accT:#fff;--brass:#b8862f;--hdr:#17483f;--bad:#a32b2b;--ok:#25693a}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1a17;--card:#16251f;--ink:#e6efe9;--mut:#93a89e;--line:#2a3d35;--acc:#e0b25a;--accT:#231a06;--brass:#e0b25a;--hdr:#0a1210;--bad:#f08080;--ok:#6fd08c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,sans-serif}
+h1,h2{font-family:Lora,Georgia,serif}
+header{background:var(--hdr);color:#f3efe3;overflow:hidden}
+.hin{max-width:980px;margin:0 auto;padding:18px 16px 0;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+h1{margin:0;font-size:28px;line-height:1.15}#hp{margin:4px 0 0;color:#b9c7bf;font-size:14px;min-height:21px}
+.lang{display:flex;gap:4px;align-self:flex-start}.lang button{background:none;border:1px solid #ffffff40;color:#f3efe3;border-radius:6px;padding:4px 9px;font:inherit;font-size:13px;cursor:pointer;transition:background .2s}
+.lang button[aria-pressed=true]{background:var(--brass);border-color:var(--brass);color:#1d1606;font-weight:700}
+.shelf{max-width:980px;margin:14px auto 0;padding:0 16px;display:flex;align-items:flex-end;gap:3px;height:64px;border-bottom:6px solid var(--brass);box-sizing:content-box}
+.shelf i{display:block;border-radius:2px 2px 0 0;transform-origin:bottom;animation:rise .7s cubic-bezier(.2,.8,.3,1) backwards}
+.shelf i.lean{transform:rotate(9deg);animation-name:rise2}
+@keyframes rise{from{transform:scaleY(0)}}@keyframes rise2{from{transform:scaleY(0) rotate(9deg)}}
+nav,main{max-width:980px;margin:0 auto;padding:0 16px}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}nav button{background:none;border:0;border-bottom:3px solid transparent;padding:11px 12px;color:var(--mut);font:inherit;cursor:pointer;white-space:nowrap;transition:color .2s,border-color .2s}
+nav button:hover{color:var(--ink)}nav button[aria-selected=true]{color:var(--ink);border-color:var(--brass);font-weight:600}
+main{padding-top:16px;padding-bottom:30px}#view{animation:fade .25s ease}@keyframes fade{from{opacity:0;transform:translateY(6px)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px 12px 12px 6px;border-left:5px solid var(--acc);padding:16px;margin-bottom:16px}
+h2{font-size:18px;margin:0 0 12px}label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+input,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus,button:focus-visible{outline:none;border-color:var(--brass);box-shadow:0 0 0 3px #b8862f44}
+.btn{background:var(--acc);color:var(--accT);border:0;border-radius:8px;padding:10px 14px;font:inherit;font-weight:700;cursor:pointer;margin:14px 8px 0 0;transition:transform .12s,filter .2s}.btn:hover{filter:brightness(1.12)}.btn:active{transform:scale(.95)}
+.btn.sm{padding:6px 10px;margin:0 4px 0 0;font-size:13px}.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;color:var(--mut);font-weight:500;padding:6px 8px;border-bottom:2px solid var(--line)}td{padding:9px 8px;border-bottom:1px solid var(--line)}tr.go{animation:out .35s forwards}@keyframes out{to{opacity:0;transform:translateX(24px)}}
+.tag{padding:2px 8px;border-radius:99px;font-size:12px;border:1px solid var(--acc);color:var(--acc);white-space:nowrap;display:inline-block}.tag.bad{border-color:var(--bad);color:var(--bad)}.tag.ok{border-color:var(--ok);color:var(--ok)}.empty{color:var(--mut)}
+.toast{position:fixed;left:50%;transform:translate(-50%,20px);bottom:20px;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s}.toast.on{opacity:1;transform:translate(-50%,0)}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<header><div class="hin"><div><h1 id="h1"></h1><p id="hp"></p></div><div class="lang" id="lang"></div></div><div class="shelf" id="shelf"></div></header>
+<nav id="tabs"></nav><main id="view"></main><div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const T={
+uz:{title:"Maktab kutubxonasi",login:"Kirish",reg:"Ro'yxatdan o'tish",name:"Ism",fam:"Familiya",vil:"Viloyat",tum:"Tuman yoki shahar",school:"Maktab",schoolPh:"25-sonli maktab",lg:"Login",pw:"Parol",haveAcc:"Akkauntim bor",newAcc:"Yangi akkaunt ochish",tRes:"Band qilinganlar",tLend:"Kitob berish",tBooks:"Kitoblar",out:"Chiqish",resTitle:"Band qilinganlar va berilgan kitoblar",student:"O'quvchi",book:"Kitob",status:"Holat",until:"{} gacha",late:"Kechikdi",inHand:"Qo'lida",returned:"Qaytarildi",cancelled:"Bekor qilindi",expired:"Muddati o'tdi",took:"Olib ketdi",cancel:"Bekor",gave:"Qaytardi",forDays:"{} kunga",emptyRes:"Hozircha band qilingan kitob yo'q. Bot orqali band qilinsa, shu yerda paydo bo'ladi.",newBook:"Yangi kitob",bTitle:"Nomi",author:"Muallif",copies:"Nusxalar soni",addBook:"Kitob qo'shish",books:"Kitoblar",avail:"Bor",emptyBooks:"Avval kitoblarni kiriting, shunda o'quvchilar botda ko'radi.",lendTitle:"Kutubxonada kitob berish",lendHint:"Botdan band qilmagan, kutubxonaga o'zi kelgan o'quvchi uchun.",stLbl:"O'quvchi (ism va sinf)",stPh:"Aziza Karimova, 7-A",bookLbl:"Kitob",left:"{} ta bor",noBooks:"Bo'sh kitob yo'q",daysLbl:"Necha kunga (1 dan 60 gacha)",daysPh:"masalan: 10",lendBtn:"Kitobni berish",added:"Kitob qo'shildi",lent:"Kitob berildi",badDays:"Kunni 1 dan 60 gacha raqam bilan yozing",fill:"Maydonlarni to'ldiring",bImpTitle:"Excel fayldan kitoblarni import qilish",bImpHint:"Faylda ustunlar: kitob nomi, muallif, nusxalar soni (muallif va soni bo'lmasa ham bo'ladi). Nomi va muallifi bir xil kitob qayta qo'shilmaydi.",bImported:"{} ta kitob qo'shildi",skipped:"{} ta takror o'tkazib yuborildi",bNoRows:"Faylda kitob nomlari topilmadi",tPupils:"O'quvchilar",impTitle:"Excel fayldan import",impHint:"Faylda 2 ustun bo'lsin: o'quvchining ismi va sinfi (masalan: Aziza Karimova | 7-A). Bir xil o'quvchi ikki marta qo'shilmaydi.",impBtn:"Excel faylni tanlash",sample:"Namuna faylni yuklab olish",imported:"{} ta o'quvchi qo'shildi",readErr:"Faylni o'qib bo'lmadi. .xlsx yoki .xls fayl tanlang",noRows:"Faylda ism va sinf topilmadi",pupTitle:"O'quvchilar ro'yxati",cls:"Sinf",allCls:"Barcha sinflar",del:"O'chirish",clsLbl:"Sinf",pupLbl:"O'quvchi",noPupils:"O'quvchilar ro'yxati bo'sh. O'quvchilar bo'limida Excel fayldan import qiling yoki ismni qo'lda yozing."},
+ru:{title:"Школьная библиотека",login:"Войти",reg:"Регистрация",name:"Имя",fam:"Фамилия",vil:"Область",tum:"Район или город",school:"Школа",schoolPh:"Школа №25",lg:"Логин",pw:"Пароль",haveAcc:"У меня есть аккаунт",newAcc:"Создать аккаунт",tRes:"Брони",tLend:"Выдать книгу",tBooks:"Книги",out:"Выйти",resTitle:"Забронированные и выданные книги",student:"Ученик",book:"Книга",status:"Статус",until:"до {}",late:"Просрочено",inHand:"На руках",returned:"Возвращена",cancelled:"Отменена",expired:"Срок истёк",took:"Забрал",cancel:"Отмена",gave:"Вернул",forDays:"на {} дн.",emptyRes:"Пока нет броней. Когда ученик забронирует книгу через бота, она появится здесь.",newBook:"Новая книга",bTitle:"Название",author:"Автор",copies:"Количество экземпляров",addBook:"Добавить книгу",books:"Книги",avail:"В наличии",emptyBooks:"Сначала добавьте книги, и ученики увидят их в боте.",lendTitle:"Выдать книгу в библиотеке",lendHint:"Для ученика, который пришёл сам и не бронировал через бота.",stLbl:"Ученик (имя и класс)",stPh:"Азиза Каримова, 7-А",bookLbl:"Книга",left:"в наличии: {}",noBooks:"Нет свободных книг",daysLbl:"На сколько дней (от 1 до 60)",daysPh:"например: 10",lendBtn:"Выдать книгу",added:"Книга добавлена",lent:"Книга выдана",badDays:"Введите число дней от 1 до 60",fill:"Заполните поля",bImpTitle:"Импорт книг из Excel",bImpHint:"Столбцы в файле: название, автор, количество экземпляров (автор и количество необязательны). Книги с тем же названием и автором не добавляются повторно.",bImported:"Добавлено книг: {}",skipped:"Пропущено повторов: {}",bNoRows:"В файле не найдены названия книг",tPupils:"Ученики",impTitle:"Импорт из Excel",impHint:"В файле должно быть 2 столбца: имя ученика и класс (например: Азиза Каримова | 7-А). Дубликаты не добавляются.",impBtn:"Выбрать файл Excel",sample:"Скачать образец",imported:"Добавлено учеников: {}",readErr:"Не удалось прочитать файл. Выберите .xlsx или .xls",noRows:"В файле не найдены имя и класс",pupTitle:"Список учеников",cls:"Класс",allCls:"Все классы",del:"Удалить",clsLbl:"Класс",pupLbl:"Ученик",noPupils:"Список учеников пуст. Импортируйте его из Excel во вкладке «Ученики» или введите имя вручную."},
+en:{title:"School Library",login:"Sign in",reg:"Sign up",name:"First name",fam:"Last name",vil:"Region",tum:"District or city",school:"School",schoolPh:"School No. 25",lg:"Login",pw:"Password",haveAcc:"I have an account",newAcc:"Create an account",tRes:"Reservations",tLend:"Lend a book",tBooks:"Books",out:"Sign out",resTitle:"Reserved and borrowed books",student:"Student",book:"Book",status:"Status",until:"until {}",late:"Overdue",inHand:"Borrowed",returned:"Returned",cancelled:"Cancelled",expired:"Expired",took:"Picked up",cancel:"Cancel",gave:"Returned",forDays:"for {} days",emptyRes:"No reservations yet. Books reserved through the bot will appear here.",newBook:"New book",bTitle:"Title",author:"Author",copies:"Number of copies",addBook:"Add book",books:"Books",avail:"Available",emptyBooks:"Add books first so students can see them in the bot.",lendTitle:"Lend a book at the library",lendHint:"For a student who came in without reserving through the bot.",stLbl:"Student (name and class)",stPh:"Aziza Karimova, 7-A",bookLbl:"Book",left:"{} available",noBooks:"No books available",daysLbl:"For how many days (1 to 60)",daysPh:"e.g. 10",lendBtn:"Lend book",added:"Book added",lent:"Book lent",badDays:"Enter a number of days from 1 to 60",fill:"Fill in all fields",bImpTitle:"Import books from Excel",bImpHint:"File columns: title, author, number of copies (author and copies are optional). Books with the same title and author are not added twice.",bImported:"{} books added",skipped:"{} duplicates skipped",bNoRows:"No book titles found in the file",tPupils:"Students",impTitle:"Import from Excel",impHint:"The file needs 2 columns: student name and class (e.g. Aziza Karimova | 7-A). Duplicates are skipped.",impBtn:"Choose Excel file",sample:"Download sample file",imported:"{} students added",readErr:"Could not read the file. Choose an .xlsx or .xls file",noRows:"No names and classes found in the file",pupTitle:"Student list",cls:"Class",allCls:"All classes",del:"Delete",clsLbl:"Class",pupLbl:"Student",noPupils:"The student list is empty. Import it from Excel in the Students tab or type the name manually."}};
+const VIL=[["Toshkent shahri","Ташкент (город)","Tashkent city"],["Toshkent viloyati","Ташкентская обл.","Tashkent region"],["Andijon","Андижан","Andijan"],["Buxoro","Бухара","Bukhara"],["Farg'ona","Фергана","Fergana"],["Jizzax","Джизак","Jizzakh"],["Xorazm","Хорезм","Khorezm"],["Namangan","Наманган","Namangan"],["Navoiy","Навои","Navoi"],["Qashqadaryo","Кашкадарья","Qashqadarya"],["Samarqand","Самарканд","Samarkand"],["Sirdaryo","Сырдарья","Syrdarya"],["Surxondaryo","Сурхандарья","Surkhandarya"],["Qoraqalpog'iston","Каракалпакстан","Karakalpakstan"]];
+const LI={uz:0,ru:1,en:2},LOC={uz:'uz',ru:'ru',en:'en-GB'};
+let lang=localStorage.getItem('lang')||'uz',tok=localStorage.getItem('tok')||'',tab='res',mode='login',me=null,D={res:[],books:[],pupils:[]},pf='';
+const $=id=>document.getElementById(id),g=id=>$(id).value.trim();
+const t=k=>T[lang][k]??k,tf=(k,v)=>t(k).replace('{}',v);
+const vname=v=>(VIL.find(x=>x[0]===v)||[])[LI[lang]]||v;
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=x=>new Date(x*1000).toLocaleString(LOC[lang],{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+function toast(x){const e=$('toast');e.textContent=x;e.classList.add('on');setTimeout(()=>e.classList.remove('on'),2500)}
+async function api(path,method='GET',body){
+ const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:body?JSON.stringify(body):undefined});
+ const j=await r.json().catch(()=>({}));
+ if(!r.ok){if(r.status===401&&tok)logout();else toast(typeof j.detail==='string'?j.detail:t('fill'));throw 0}
+ return j}
+async function load(){try{me=await api('me');[D.res,D.books,D.pupils]=await Promise.all([api('reservations'),api('books'),api('pupils')])}catch(e){return}render()}
+function logout(){tok='';me=null;localStorage.removeItem('tok');render()}
+async function auth(path,body){try{const j=await api(path,'POST',body);tok=j.token;localStorage.setItem('tok',tok);await load()}catch(e){}}
+const doLogin=()=>auth('login',{login:g('lg'),parol:$('pw').value});
+const doReg=()=>auth('register',{name:g('rn'),fam:g('rf'),vil:$('rv').value,tum:g('rt'),maktab:g('rs'),login:g('lg'),parol:$('pw').value});
+async function act(id,a,el){if(el)el.closest('tr').classList.add('go');try{await api(`reservations/${id}/${a}`,'POST');setTimeout(load,a==='took'?0:300)}catch(e){load()}}
+async function addBook(){try{await api('books','POST',{title:g('nt'),author:g('na'),total:+g('nn')||1});await load();toast(t('added'))}catch(e){}}
+function authView(){const r=mode==='reg';return `<div class="card" style="max-width:440px;margin:0 auto"><h2>${r?t('reg'):t('login')}</h2>
+${r?`<div class="row"><div><label>${t('name')}</label><input id="rn"></div><div><label>${t('fam')}</label><input id="rf"></div></div><label>${t('vil')}</label><select id="rv">${VIL.map(x=>`<option value="${x[0]}">${x[LI[lang]]}</option>`).join('')}</select><label>${t('tum')}</label><input id="rt"><label>${t('school')}</label><input id="rs" placeholder="${t('schoolPh')}">`:''}
+<label>${t('lg')}</label><input id="lg" autocomplete="username"><label>${t('pw')}</label><input id="pw" type="password" autocomplete="current-password">
+<button class="btn" onclick="${r?'doReg()':'doLogin()'}">${r?t('reg'):t('login')}</button><button class="btn ghost" onclick="mode='${r?'login':'reg'}';render()">${r?t('haveAcc'):t('newAcc')}</button></div>`}
+function resView(){
+ const st={band:r=>`<span class="tag">${tf('until',fmt(r.until))}</span>`,olindi:r=>`<span class="tag ${r.late?'bad':'ok'}">${r.late?t('late')+' · ':''}${r.due?tf('until',fmt(r.due)):t('inHand')}</span>`,qaytarildi:()=>`<span class="tag ok">${t('returned')}</span>`,bekor:()=>`<span class="tag">${t('cancelled')}</span>`,muddati:()=>`<span class="tag bad">${t('expired')}</span>`};
+ const btn=r=>r.st==='band'?`<button class="btn sm" onclick="act(${r.id},'took',this)">${t('took')}</button><button class="btn sm ghost" onclick="act(${r.id},'cancel',this)">${t('cancel')}</button>`:r.st==='olindi'?`<button class="btn sm" onclick="act(${r.id},'returned',this)">${t('gave')}</button>`:'';
+ return `<div class="card"><h2>${t('resTitle')} (${D.res.length})</h2>${D.res.length?`<div class="tbl"><table><tr><th>${t('student')}</th><th>${t('book')}</th><th>${t('status')}</th><th></th></tr>${D.res.map(r=>`<tr><td>${esc(r.name)}${r.cls?`<br><small>${esc(r.cls)}</small>`:''}</td><td>${esc(r.title)}${r.days?`<br><small>${tf('forDays',r.days)}</small>`:''}</td><td>${st[r.st](r)}</td><td>${btn(r)}</td></tr>`).join('')}</table></div>`:`<div class="empty">${t('emptyRes')}</div>`}</div>`}
+function booksView(){return `<div class="card"><h2>${t('bImpTitle')}</h2><p class="empty">${t('bImpHint')}</p><input id="bf" type="file" accept=".xlsx,.xls" onchange="importBooks(this)" hidden><button class="btn" onclick="$('bf').click()">${t('impBtn')}</button><button class="btn ghost" onclick="sampleBooks()">${t('sample')}</button></div>
+<div class="card"><h2>${t('newBook')}</h2><label>${t('bTitle')}</label><input id="nt"><label>${t('author')}</label><input id="na"><label>${t('copies')}</label><input id="nn" type="number" value="1" min="1"><button class="btn" onclick="addBook()">${t('addBook')}</button></div>
+<div class="card"><h2>${t('books')} (${D.books.length})</h2>${D.books.length?`<div class="tbl"><table><tr><th>${t('bTitle')}</th><th>${t('author')}</th><th>${t('avail')}</th></tr>${D.books.map(b=>`<tr><td>${esc(b.title)}</td><td>${esc(b.author)}</td><td><span class="tag">${b.avail} / ${b.total}</span></td></tr>`).join('')}</table></div>`:`<div class="empty">${t('emptyBooks')}</div>`}</div>`}
+function lendView(){const av=D.books.filter(b=>b.avail>0);return `<div class="card" style="max-width:520px"><h2>${t('lendTitle')}</h2><p class="empty">${t('lendHint')}</p>
+${pupPick()}<label>${t('bookLbl')}</label><select id="lb">${av.length?av.map(b=>`<option value="${b.id}">${esc(b.title)} (${tf('left',b.avail)})</option>`).join(''):`<option value="">${t('noBooks')}</option>`}</select>
+<label>${t('daysLbl')}</label><input id="ld" type="number" value="14" min="1" max="60" placeholder="${t('daysPh')}"><button class="btn" onclick="lend()">${t('lendBtn')}</button></div>`}
+async function lend(){const d=parseInt($('ld').value,10);if(!(d>=1&&d<=60)){toast(t('badDays'));return}
+ try{await api('lend','POST',{name:$('lp')?$('lp').value:g('ln'),book_id:+$('lb').value,days:d});tab='res';await load();toast(t('lent'))}catch(e){}}
+
+const NR=/ism|имя|фио|name|quvchi|ученик|student|fio/i,CR=/sinf|класс|class|grade/i;
+const cmpC=(a,b)=>a.localeCompare(b,'en',{numeric:true});
+const classes=()=>[...new Set(D.pupils.map(p=>p.cls))].sort(cmpC);
+const pupOpts=c=>D.pupils.filter(p=>p.cls===c).sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${esc(p.name+', '+p.cls)}">${esc(p.name)}</option>`).join('');
+const fillPupils=()=>{$('lp').innerHTML=pupOpts($('lc').value)};
+function pupPick(){const cl=classes();
+ if(!cl.length)return `<p class="empty">${t('noPupils')}</p><label>${t('stLbl')}</label><input id="ln" placeholder="${t('stPh')}">`;
+ return `<div class="row"><div><label>${t('clsLbl')}</label><select id="lc" onchange="fillPupils()">${cl.map(c=>`<option>${esc(c)}</option>`).join('')}</select></div><div><label>${t('pupLbl')}</label><select id="lp">${pupOpts(cl[0])}</select></div></div>`}
+function pupilsView(){const cl=classes(),list=D.pupils.filter(p=>!pf||p.cls===pf).sort((a,b)=>cmpC(a.cls,b.cls)||a.name.localeCompare(b.name));
+ return `<div class="card"><h2>${t('impTitle')}</h2><p class="empty">${t('impHint')}</p><input id="xf" type="file" accept=".xlsx,.xls" onchange="importXlsx(this)" hidden><button class="btn" onclick="$('xf').click()">${t('impBtn')}</button><button class="btn ghost" onclick="sample()">${t('sample')}</button></div>
+<div class="card"><h2>${t('pupTitle')} (${list.length})</h2><select id="pf" onchange="pf=this.value;render()" style="max-width:220px;margin-bottom:10px"><option value="">${t('allCls')}</option>${cl.map(c=>`<option ${c===pf?'selected':''}>${esc(c)}</option>`).join('')}</select>
+${list.length?`<div class="tbl"><table><tr><th>${t('cls')}</th><th>${t('student')}</th><th></th></tr>${list.map(p=>`<tr><td><span class="tag">${esc(p.cls)}</span></td><td>${esc(p.name)}</td><td><button class="btn sm ghost" onclick="delPupil(${p.id})">${t('del')}</button></td></tr>`).join('')}</table></div>`:`<div class="empty">${t('noPupils')}</div>`}</div>`}
+const normCls=v=>String(v??'').trim().toUpperCase().replace(/^(\d+)\s*[-–—.]?\s*([A-ZА-ЯЎҚҒҲ].*)$/,'$1-$2').replace(/\s+/g,'');
+async function importXlsx(inp){const f=inp.files[0];if(!f)return;const items=[];
+ try{const wb=XLSX.read(await f.arrayBuffer());
+  for(const sn of wb.SheetNames){const rs=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});if(!rs.length)continue;
+   const h=rs[0].map(x=>String(x).toLowerCase());let ni=h.findIndex(x=>NR.test(x)),ci=h.findIndex(x=>CR.test(x)),s=0;
+   if(ni>=0||ci>=0){s=1;if(ni<0)ni=ci===0?1:0;if(ci<0)ci=ni===0?1:0}else{ni=0;ci=1}
+   for(const r of rs.slice(s)){const n=String(r[ni]??'').trim(),c=normCls(r[ci])||(/^\d/.test(sn)?normCls(sn):'');if(n&&c)items.push({name:n,cls:c})}}
+ }catch(e){inp.value='';return toast(t('readErr'))}
+ inp.value='';if(!items.length)return toast(t('noRows'));
+ try{const j=await api('pupils/import','POST',{items});await load();toast(tf('imported',j.added))}catch(e){}}
+function sample(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([[t('pupLbl'),t('cls')],['Aziza Karimova','7-A'],['Jasur Aliyev','7-A'],['Madina Yusupova','8-B']]),'Sheet1');XLSX.writeFile(wb,'oquvchilar.xlsx')}
+async function delPupil(id){try{await api('pupils/'+id,'DELETE');await load()}catch(e){}}
+
+const BT=/nom|назв|title|kitob|книг|book/i,BA=/muallif|автор|author/i,BN=/nusxa|soni|кол|экз|copies|count|qty|total/i;
+async function importBooks(inp){const f=inp.files[0];if(!f)return;const items=[];
+ try{const wb=XLSX.read(await f.arrayBuffer());
+  for(const sn of wb.SheetNames){const rs=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});if(!rs.length)continue;
+   const h=rs[0].map(x=>String(x).toLowerCase());let a=h.findIndex(x=>BT.test(x)),b=h.findIndex(x=>BA.test(x)),c=h.findIndex(x=>BN.test(x)),s=0;
+   if(a>=0||b>=0||c>=0){s=1;if(a<0)a=[0,1,2].find(i=>i!==b&&i!==c)}else{a=0;b=1;c=2}
+   for(const r of rs.slice(s)){const ti=String(r[a]??'').trim();if(ti)items.push({title:ti,author:b>=0?String(r[b]??'').trim():'',total:c>=0?(parseInt(r[c],10)||1):1})}}
+ }catch(e){inp.value='';return toast(t('readErr'))}
+ inp.value='';if(!items.length)return toast(t('bNoRows'));
+ try{const j=await api('books/import','POST',{items});await load();toast(tf('bImported',j.added)+(j.skipped?' · '+tf('skipped',j.skipped):''))}catch(e){}}
+function sampleBooks(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([[t('bTitle'),t('author'),t('copies')],['O\'tkan kunlar','Abdulla Qodiriy',5],['Sariq devni minib','Xudoyberdi To\'xtaboyev',3]]),'Sheet1');XLSX.writeFile(wb,'kitoblar.xlsx')}
+function setLang(l){const keep={};document.querySelectorAll('#view input,#view select').forEach(e=>e.id&&(keep[e.id]=e.value));
+ lang=l;localStorage.setItem('lang',l);render();for(const k in keep){const e=$(k);if(e){e.value=keep[k];if(k==='lc')fillPupils()}}}
+function render(){
+ document.documentElement.lang=lang;document.title=$('h1').textContent=t('title');
+ $('lang').innerHTML=['uz','ru','en'].map(l=>`<button aria-pressed="${l===lang}" onclick="setLang('${l}')">${l.toUpperCase()}</button>`).join('');
+ const v=$('view');v.style.animation='none';v.offsetHeight;v.style.animation='';
+ if(!me){$('hp').textContent='';$('tabs').innerHTML='';v.innerHTML=authView();return}
+ $('hp').textContent=`${me.name} ${me.fam} · ${me.school.name}, ${me.school.tum}, ${vname(me.school.vil)}`;
+ const n=D.res.filter(r=>r.st==='band').length;
+ $('tabs').innerHTML=[['res',t('tRes')+(n?` (${n})`:'')],['lend',t('tLend')],['pupils',t('tPupils')],['books',t('tBooks')]].map(([k,x])=>`<button aria-selected="${k===tab}" onclick="tab='${k}';render()">${x}</button>`).join('')+`<button onclick="logout()">${t('out')}</button>`;
+ v.innerHTML=tab==='res'?resView():tab==='lend'?lendView():tab==='pupils'?pupilsView():booksView();
+}
+const C=['#b8862f','#2f6f62','#7a2e3a','#c9b27a','#27456b','#8a5a2b','#4e7d4a','#a33f2f','#d8c9a0','#3a3a5c'];
+$('shelf').innerHTML=Array.from({length:26},(_,i)=>`<i class="${i===17?'lean':''}" style="width:${10+(i*7%9)}px;height:${34+(i*13%27)}px;background:${C[i*3%C.length]};animation-delay:${i*35}ms"></i>`).join('');
+setInterval(()=>{if(me&&tab==='res'&&!document.querySelector('tr.go'))load()},15000);
+tok?load():render();
+</script></body></html>

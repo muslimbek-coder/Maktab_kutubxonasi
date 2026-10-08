@@ -517,11 +517,10 @@ async def link_library_group(m: Message, code):
     await m.answer(text(tg_id, "group_linked"))
 
 @dp.message(Command("librarian"))
-async def link_librarian(m: Message):
+async def link_librarian_code(m: Message, code: str):
     if m.chat.type != "private":
         return await m.answer(text(m.from_user.id, "use_private"))
-    parts = (m.text or "").split(maxsplit=1)
-    code = parts[1].strip().upper() if len(parts) > 1 else ""
+    code = code.strip().upper()
     entry = one(
         "select librarian_id from library_codes "
         "where code=? and purpose='access' and expires>?", (code, int(time.time())))
@@ -541,6 +540,12 @@ async def link_librarian(m: Message):
     q("insert into bot_users(tg_id) values(?) on conflict(tg_id) do nothing", (m.from_user.id,))
     await m.answer(text(m.from_user.id, "linked"))
     await show_librarian_menu(m)
+
+@dp.message(Command("librarian"))
+async def link_librarian(m: Message):
+    parts = (m.text or "").split(maxsplit=1)
+    code = parts[1].strip() if len(parts) > 1 else ""
+    await link_librarian_code(m, code)
 
 @dp.message(Command("linklibrary"))
 async def link_group_command(m: Message):
@@ -609,6 +614,8 @@ async def start(m: Message):
             return await link_library_group(m, payload)
         return await m.answer(text(m.from_user.id, "added_to_group"))
     q("insert into bot_users(tg_id) values(?) on conflict(tg_id) do nothing", (m.from_user.id,))
+    if payload.lower().startswith("librarian_"):
+        return await link_librarian_code(m, payload.split("_", 1)[1])
     await start_for_user(m)
 
 @dp.message(Command("maktab"))
@@ -791,6 +798,10 @@ async def pick_book(c: CallbackQuery):
 
 @dp.message(F.text & ~F.text.startswith("/"))
 async def got_text(m: Message):
+    code = (m.text or "").strip().upper()
+    if (m.chat.type == "private" and len(code) == 16
+            and all(char in "0123456789ABCDEF" for char in code)):
+        return await link_librarian_code(m, code)
     draft = one("select * from librarian_book_drafts where tg_id=?", (m.from_user.id,))
     if draft and m.chat.type == "private":
         value = m.text.strip()
@@ -970,7 +981,7 @@ async def create_librarian_code(u=Depends(me)):
     q("insert into library_codes(code,librarian_id,purpose,expires) values(?,?,'access',?)",
       (code, u["id"], now + 600))
     return {"code": code, "expires_in": 600,
-            "bot_url": f"https://t.me/{bot_info.username}?start=librarian"}
+                        "bot_url": f"https://t.me/{bot_info.username}?start=librarian_{code}"}
 
 @app.post("/api/telegram/group-link")
 async def create_group_link(u=Depends(me)):

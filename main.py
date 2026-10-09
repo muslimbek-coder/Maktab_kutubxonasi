@@ -42,11 +42,15 @@ create table if not exists parent_children(parent_tg bigint, student_tg bigint, 
 create table if not exists parent_codes(code text primary key, student_tg bigint, school_id int, expires bigint);
 create table if not exists bot_users(tg_id bigint primary key, language text);
 create table if not exists library_codes(code text primary key, librarian_id int not null, purpose text not null, expires bigint not null);
+create table if not exists library_groups(school_id int not null, telegram_group_id bigint not null, telegram_group_title text, primary key(school_id, telegram_group_id));
 create table if not exists librarian_book_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, title text, author text, genre text);
 alter table librarians add column if not exists telegram_tg_id bigint;
 alter table schools add column if not exists telegram_group_id bigint;
 alter table schools add column if not exists telegram_group_title text;
 alter table books add column if not exists genre text not null default '';
+insert into library_groups(school_id, telegram_group_id, telegram_group_title)
+select id, telegram_group_id, telegram_group_title from schools
+where telegram_group_id is not null on conflict do nothing;
 """
 with pool.connection() as _c:
     _c.execute(SCHEMA)
@@ -398,7 +402,15 @@ async def reserve(m: Message, tg, book_id, days, name, cls):
     await notify_parents(tg, parent_notices)
 
 async def ask_days(m: Message, tg, book_id):
-    q("update students set want=?, state='days', requested_days=null where tg_id=?", (book_id, tg))
+    book = one("select school_id from books where id=?", (book_id,))
+    if not book:
+        return await m.answer(text(tg, "bad_book"))
+    q(
+        "insert into students(tg_id,school_id,role,state,want) "
+        "values(?,?,'student','days',?) on conflict(tg_id) do update set "
+        "school_id=excluded.school_id, state='days', want=excluded.want, "
+        "requested_days=null",
+        (tg, book["school_id"], book_id))
     await m.answer(text(tg, "reserve_days"))
 
 async def notify_parents(student_tg, content):
@@ -416,12 +428,18 @@ async def show_librarian_menu(m: Message):
     ]))
 
 async def publish_book(book):
-    school = one("select name, telegram_group_id from schools where id=?", (book["school_id"],))
-    if not bot or not school or not school["telegram_group_id"]:
+    school = one("select name from schools where id=?", (book["school_id"],))
+    groups = rows(
+        "select telegram_group_id from library_groups where school_id=?",
+        (book["school_id"],))
+    if not bot or not school or not groups:
         return False
     try:
         bot_info = await bot.get_me()
-        link = f"https://t.me/{bot_info.username}?start=library"
+        if not bot_info.username:
+            log.error("Telegram bot username sozlanmagan; kitob e'loni yuborilmadi.")
+            return False
+        link = f"https://t.me/{bot_info.username}?start=reserve_{book['id']}"
         available = max(avail(book), 0)
         safe_title = escape(book["title"])
         safe_author = escape(book.get("author") or "—")
@@ -443,49 +461,32 @@ async def publish_book(book):
             f"🏫 {safe_school}\n\n"
             "📲 Bot orqali oldindan band qiling / Бронируйте в боте / Reserve in the bot"
         )
-        await bot.send_message(
-            school["telegram_group_id"], message, parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="📲 Band qilish / Бронь / Reserve", url=link)
-            ]]))
-        return True
+        sent = 0
+        for group in groups:
+            try:
+                await bot.send_message(
+                    group["telegram_group_id"], message, parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(
+                            text="📲 Band qilish / Бронь / Reserve", url=link)
+                    ]]))
+                sent += 1
+            except Exception:
+                log.exception(
+                    "Yangi kitob e'loni yuborilmadi (book_id=%s, group_id=%s)",
+                    book["id"], group["telegram_group_id"])
+        return sent == len(groups)
     except Exception:
         log.exception("Yangi kitob e'loni yuborilmadi (book_id=%s)", book["id"])
         return False
 
-async def publish_imported_books(school_id, books):
+async def publish_imported_books(books):
     if not books:
         return True
-    school = one("select name, telegram_group_id from schools where id=?", (school_id,))
-    if not bot or not school or not school["telegram_group_id"]:
-        return False
-    try:
-        bot_info = await bot.get_me()
-        link = f"https://t.me/{bot_info.username}?start=library"
-        lines = []
-        for b in books[:8]:
-            lines.append(
-                f"• <b>{escape(b['title'][:120])}</b> — "
-                f"{escape((b.get('author') or '—')[:80])}; "
-                f"{escape((b.get('genre') or '—')[:50])}; "
-                f"{max(avail(b), 0)}/{b['total']}"
-            )
-        if len(books) > 8:
-            lines.append(f"… va yana {len(books) - 8} ta kitob")
-        message = (
-            "📚 <b>KUTUBXONAGA YANGI KITOBLAR / НОВЫЕ КНИГИ / NEW BOOKS</b>\n"
-            f"🏫 {escape(school['name'])}\n\n" + "\n".join(lines) +
-            "\n\n📲 Botda band qiling / Бронируйте в боте / Reserve in the bot"
-        )
-        await bot.send_message(
-            school["telegram_group_id"], message, parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="📲 Band qilish / Бронь / Reserve", url=link)
-            ]]))
-        return True
-    except Exception:
-        log.exception("Import qilingan kitoblar e'loni yuborilmadi (school_id=%s)", school_id)
-        return False
+    results = []
+    for book in books:
+        results.append(await publish_book(book))
+    return all(results)
 
 async def link_library_group(m: Message, code):
     tg_id = m.from_user.id
@@ -512,8 +513,11 @@ async def link_library_group(m: Message, code):
         "returning librarian_id", (code.upper(), int(time.time())))
     if not consumed or consumed["librarian_id"] != librarian["id"]:
         return await m.answer(text(tg_id, "group_code"))
-    q("update schools set telegram_group_id=?, telegram_group_title=? where id=?",
-      (m.chat.id, m.chat.title or "", librarian["school_id"]))
+    q(
+        "insert into library_groups(school_id,telegram_group_id,telegram_group_title) "
+        "values(?,?,?) on conflict(school_id,telegram_group_id) do update set "
+        "telegram_group_title=excluded.telegram_group_title",
+        (librarian["school_id"], m.chat.id, m.chat.title or ""))
     await m.answer(text(tg_id, "group_linked"))
 
 @dp.message(Command("librarian"))
@@ -603,6 +607,11 @@ async def start_for_user(m: Message):
     librarian = one("select id from librarians where telegram_tg_id=?", (m.from_user.id,))
     if librarian:
         return await show_librarian_menu(m)
+    student = one("select role from students where tg_id=?", (m.from_user.id,))
+    if student and student["role"] == "student":
+        return await show_student_menu(m)
+    if student and student["role"] == "parent":
+        return await show_parent_menu(m)
     await show_viloyatlar(m)
 
 @dp.message(CommandStart())
@@ -616,6 +625,13 @@ async def start(m: Message):
     q("insert into bot_users(tg_id) values(?) on conflict(tg_id) do nothing", (m.from_user.id,))
     if payload.lower().startswith("librarian_"):
         return await link_librarian_code(m, payload.split("_", 1)[1])
+    if payload.lower().startswith("reserve_"):
+        book_id = payload.split("_", 1)[1]
+        if not book_id.isdigit() or int(book_id) > 2147483647:
+            return await m.answer(text(m.from_user.id, "bad_book"))
+        q("update bot_users set language=coalesce(language,'uz') where tg_id=?",
+          (m.from_user.id,))
+        return await ask_days(m, m.from_user.id, int(book_id))
     await start_for_user(m)
 
 @dp.message(Command("maktab"))
@@ -834,11 +850,10 @@ async def got_text(m: Message):
                  draft["genre"] or "", int(value)))
             q("delete from librarian_book_drafts where tg_id=?", (m.from_user.id,))
             published = await publish_book(book)
-            school = one("select telegram_group_id from schools where id=?",
+            school = one("select 1 from library_groups where school_id=? limit 1",
                          (draft["school_id"],))
             announce_key = "book_added" if published else (
-                "book_added_no_group" if not school or not school["telegram_group_id"]
-                else "book_added_no_delivery")
+                "book_added_no_group" if not school else "book_added_no_delivery")
             await m.answer(text(m.from_user.id, announce_key, title=book["title"]))
             return await show_librarian_menu(m)
     st = one("select * from students where tg_id=?", (m.from_user.id,))
@@ -867,14 +882,17 @@ async def got_text(m: Message):
         q("update students set name=?, cls=?, state=null where tg_id=?",
           (parts[0], parts[1], m.from_user.id))
         return await issue_parent_code(m, m.from_user.id, st["school_id"])
-    if st["state"] == "days" and st["role"] == "student":
+    if st["state"] == "days":
         t = m.text.strip()
         if not t.isdigit() or not 1 <= int(t) <= 60:
             return await m.answer(text(m.from_user.id, "days_error"))
+        if st["name"] and st["cls"]:
+            return await reserve(
+                m, m.from_user.id, st["want"], int(t), st["name"], st["cls"])
         q("update students set requested_days=?, state='identity' where tg_id=?",
           (int(t), m.from_user.id))
         return await m.answer(text(m.from_user.id, "identity"))
-    if st["state"] == "identity" and st["role"] == "student":
+    if st["state"] == "identity":
         parts = [part.strip() for part in m.text.split(",", 1)]
         if len(parts) != 2 or len(parts[0]) < 3 or not parts[1] or len(parts[0]) > 60 or len(parts[1]) > 10:
             return await m.answer(text(m.from_user.id, "profile_error"))
@@ -959,12 +977,14 @@ def get_me(u=Depends(me)):
 
 @app.get("/api/telegram/status")
 def get_telegram_status(u=Depends(me)):
-    school = one("select telegram_group_id, telegram_group_title from schools where id=?",
-                 (u["school_id"],))
+    groups = rows(
+        "select telegram_group_id, telegram_group_title from library_groups "
+        "where school_id=? order by telegram_group_title, telegram_group_id",
+        (u["school_id"],))
     return {
         "linked": bool(u.get("telegram_tg_id")),
-        "group_linked": bool(school and school["telegram_group_id"]),
-        "group_title": school["telegram_group_title"] if school else None,
+        "group_linked": bool(groups),
+        "groups": groups,
     }
 
 @app.post("/api/telegram/access-code")
@@ -992,7 +1012,6 @@ async def create_group_link(u=Depends(me)):
         raise HTTPException(503, "Telegram bot username sozlanmagan")
     now = int(time.time())
     q("delete from library_codes where expires<=?", (now,))
-    q("delete from library_codes where librarian_id=? and purpose='group'", (u["id"],))
     code = secrets.token_hex(8).upper()
     q("insert into library_codes(code,librarian_id,purpose,expires) values(?,?,'group',?)",
       (code, u["id"], now + 1800))
@@ -1112,7 +1131,6 @@ async def import_books(d: BooksIn, u=Depends(me)):
     have = {(r["title"].lower(), (r["author"] or "").lower())
             for r in rows("select title, author from books where school_id=?", (sid,))}
     to_add = []
-    announcements = []
     for b in d.items[:5000]:
         ti, au, genre = b.title.strip()[:200], b.author.strip()[:100], b.genre.strip()[:60]
         if not ti:
@@ -1124,8 +1142,12 @@ async def import_books(d: BooksIn, u=Depends(me)):
         have.add(key)
         total = min(max(b.total, 1), 1000)
         to_add.append((sid, ti, au, genre, total))
-        announcements.append({"id": -1, "school_id": sid, "title": ti,
-                              "author": au, "genre": genre, "total": total})
-    many("insert into books(school_id,title,author,genre,total) values(?,?,?,?,?)", to_add)
-    announced = await publish_imported_books(sid, announcements)
+    if not to_add:
+        return {"added": 0, "skipped": skipped, "announced": True}
+    book_values = ",".join(["(?,?,?,?,?)"] * len(to_add))
+    inserted_books = rows(
+        "insert into books(school_id,title,author,genre,total) values " +
+        book_values + " returning *",
+        tuple(value for item in to_add for value in item))
+    announced = await publish_imported_books(inserted_books)
     return {"added": len(to_add), "skipped": skipped, "announced": announced}

@@ -98,6 +98,9 @@ BOT_TEXT = {
         "role": "Siz kim bo'lasiz?", "student": "O'quvchi", "parent": "Ota-ona",
         "librarian": "Kutubxonachi", "student_menu": "O'quvchi bo'limi:",
         "parent_menu": "Ota-ona bo'limi:", "books_button": "📚 Kitob tanlash",
+        "student_profile_button": "👤 Ism va sinfni kiritish",
+        "profile_prompt": "Ism-familiyangiz va sinfingizni vergul bilan yozing (masalan: Aziza Karimova, 7-A):",
+        "profile_saved": "✅ Ism-familiya va sinf saqlandi.",
         "parent_code_button": "🔗 Ota-onaga ulanish kodi", "parent_add": "➕ Farzand qo'shish",
         "parent_list": "👨‍👩‍👧 Farzandlarim va kitoblari", "librarian_menu": "📚 Kutubxonachi bo'limi",
         "add_book_button": "➕ Yangi kitob qo'shish", "book_missing": "Bu kutubxonada hozircha kitob yo'q.",
@@ -160,6 +163,18 @@ BOT_TEXT = {
         "returned_status": "Qaytarilgan", "cancelled_status": "Bekor qilingan",
         "expired_status": "Band muddati tugagan",
         "took_notice": "📗 “{title}” kitobi olingani belgilandi.\nQaytarish muddati: {due}",
+        "site_lend_notice": "📗 Kutubxonachidan “{title}” kitobini oldingiz.\nQaytarish muddati: {due}",
+        "my_results": "📚 Natijam",
+        "reading_now": "📖 Hozir o'qiyotgan kitoblaringiz:",
+        "no_reading": "Hozircha o'qiyotgan kitobingiz yo'q.",
+        "book_history": "📕 Qaytarilgan kitoblaringiz:",
+        "no_book_history": "Hozircha qaytarilgan kitoblaringiz yo'q.",
+        "no_results": "Hozircha olingan kitoblaringiz yo'q.",
+        "reading_status": "O'qiyapti",
+        "lent_by_site": "Kitob berildi, Telegramga xabar yuborildi.",
+        "lent_unlinked": "Kitob berildi, lekin shu ism va sinf bilan botda ro'yxatdan o'tgan o'quvchi topilmadi.",
+        "lent_ambiguous": "Kitob berildi, lekin shu ism va sinf bir nechta Telegram akkauntiga mos. Xabar yuborilmadi.",
+        "lent_delivery_failed": "Kitob berildi, lekin Telegramga xabar yuborilmadi.",
         "returned_notice": "🙏 “{title}” kitobi qaytarildi. Rahmat!",
         "cancelled_notice": "❌ “{title}” kitobining bandi bekor qilindi.",
         "expired_notice": "⌛ “{title}” bandining muddati tugadi. Kerak bo'lsa, qaytadan band qiling.",
@@ -171,7 +186,11 @@ BOT_TEXT = {
         "no_schools": "Библиотеки пока не зарегистрированы.", "role": "Кто вы?",
         "student": "Ученик", "parent": "Родитель", "librarian": "Библиотекарь",
         "student_menu": "Раздел ученика:", "parent_menu": "Раздел родителя:",
-        "books_button": "📚 Выбрать книгу", "parent_code_button": "🔗 Код для родителя",
+        "books_button": "📚 Выбрать книгу",
+        "student_profile_button": "👤 Ввести имя и класс",
+        "profile_prompt": "Введите имя, фамилию и класс через запятую (например: Aziza Karimova, 7-A):",
+        "profile_saved": "✅ Имя и класс сохранены.",
+        "parent_code_button": "🔗 Код для родителя",
         "parent_add": "➕ Добавить ребёнка", "parent_list": "👨‍👩‍👧 Мои дети и книги",
         "librarian_menu": "📚 Раздел библиотекаря", "add_book_button": "➕ Добавить книгу",
         "book_missing": "В этой библиотеке пока нет книг.", "book_list": "Выберите книгу. Бронь действует 2 дня:",
@@ -223,6 +242,18 @@ BOT_TEXT = {
         "returned_status": "Возвращена", "cancelled_status": "Отменена",
         "expired_status": "Срок брони истёк", "not_found": "Не найдено.",
         "took_notice": "📗 Отмечено получение книги «{title}».\nВерните до: {due}",
+        "site_lend_notice": "📗 Вы получили у библиотекаря книгу «{title}».\nВернуть до: {due}",
+        "my_results": "📚 Мои результаты",
+        "reading_now": "📖 Сейчас вы читаете:",
+        "no_reading": "Сейчас у вас нет книг на руках.",
+        "book_history": "📕 Возвращённые вами книги:",
+        "no_book_history": "Пока нет возвращённых вами книг.",
+        "no_results": "Пока вы не получали книги.",
+        "reading_status": "Читаете",
+        "lent_by_site": "Книга выдана, уведомление отправлено в Telegram.",
+        "lent_unlinked": "Книга выдана, но ученик с таким именем и классом не найден в боте.",
+        "lent_ambiguous": "Книга выдана, но имя и класс подходят нескольким аккаунтам. Уведомление не отправлено.",
+        "lent_delivery_failed": "Книга выдана, но уведомление в Telegram не отправлено.",
         "returned_notice": "🙏 Книга «{title}» возвращена. Спасибо!",
         "cancelled_notice": "❌ Бронь книги «{title}» отменена.",
         "expired_notice": "⌛ Срок брони книги «{title}» истёк. При необходимости забронируйте снова.",
@@ -234,7 +265,11 @@ BOT_TEXT = {
         "school": "Choose your school:", "no_schools": "No libraries have registered yet.",
         "role": "Who are you?", "student": "Student", "parent": "Parent",
         "librarian": "Librarian", "student_menu": "Student menu:", "parent_menu": "Parent menu:",
-        "books_button": "📚 Browse books", "parent_code_button": "🔗 Parent linking code",
+        "books_button": "📚 Browse books",
+        "student_profile_button": "👤 Enter name and class",
+        "profile_prompt": "Enter your full name and class separated by a comma (for example: Aziza Karimova, 7-A):",
+        "profile_saved": "✅ Name and class saved.",
+        "parent_code_button": "🔗 Parent linking code",
         "parent_add": "➕ Add a child", "parent_list": "👨‍👩‍👧 My children and books",
         "librarian_menu": "📚 Librarian menu", "add_book_button": "➕ Add a book",
         "book_missing": "There are no books in this library yet.",
@@ -291,6 +326,18 @@ BOT_TEXT = {
         "returned_status": "Returned", "cancelled_status": "Cancelled",
         "expired_status": "Reservation expired", "not_found": "Not found.",
         "took_notice": "📗 Pickup of “{title}” was recorded.\nReturn by: {due}",
+        "site_lend_notice": "📗 You borrowed “{title}” from the librarian.\nReturn by: {due}",
+        "my_results": "📚 My results",
+        "reading_now": "📖 Currently reading:",
+        "no_reading": "You have no books checked out right now.",
+        "book_history": "📕 Books you returned:",
+        "no_book_history": "You have not returned any books yet.",
+        "no_results": "You have not borrowed any books yet.",
+        "reading_status": "Reading",
+        "lent_by_site": "Book lent; Telegram notification sent.",
+        "lent_unlinked": "Book lent, but no bot user was found with this name and class.",
+        "lent_ambiguous": "Book lent, but this name and class match multiple Telegram accounts. No notification was sent.",
+        "lent_delivery_failed": "Book lent, but the Telegram notification could not be sent.",
         "returned_notice": "🙏 “{title}” was returned. Thank you!",
         "cancelled_notice": "❌ The reservation for “{title}” was cancelled.",
         "expired_notice": "⌛ The reservation for “{title}” expired. Reserve again if needed.",
@@ -317,11 +364,13 @@ def actor_id(m: Message):
 
 async def notify(tg, text):
     if not bot:
-        return
+        return False
     try:
         await bot.send_message(tg, text)
+        return True
     except Exception as e:
         log.warning("Telegram xabari yuborilmadi (tg_id=%s): %s", tg, e)
+        return False
 
 async def show_viloyatlar(m: Message):
     tg_id = actor_id(m)
@@ -358,8 +407,48 @@ async def show_student_menu(m: Message):
     tg_id = actor_id(m)
     await m.answer(text(tg_id, "student_menu"), reply_markup=kb([
         [InlineKeyboardButton(text=text(tg_id, "books_button"), callback_data="student:books")],
+        [InlineKeyboardButton(text=text(tg_id, "my_results"), callback_data="student:result")],
+        [InlineKeyboardButton(text=text(tg_id, "student_profile_button"), callback_data="student:profile")],
         [InlineKeyboardButton(text=text(tg_id, "parent_code_button"), callback_data="student:code")],
     ]))
+
+async def show_student_results(m: Message, tg_id: int, offset: int = 0):
+    st = one("select 1 from students where tg_id=? and role='student'", (tg_id,))
+    if not st:
+        return await m.answer(text(tg_id, "not_started"))
+    reading = rows(
+        "select r.*, b.title from res r join books b on b.id=r.book_id "
+        "where r.tg_id=? and r.st='olindi' order by r.id desc", (tg_id,))
+    total = one(
+        "select count(*) c from res where tg_id=? and st='qaytarildi'", (tg_id,))["c"]
+    history = rows(
+        "select r.*, b.title from res r join books b on b.id=r.book_id "
+        "where r.tg_id=? and r.st='qaytarildi' order by r.id desc limit 10 offset ?",
+        (tg_id, offset))
+    if not reading and not total:
+        return await m.answer(text(tg_id, "no_results"))
+    parts = [text(tg_id, "my_results"), "\n" + text(tg_id, "reading_now")]
+    parts.extend(
+        f"• {x['title'][:120]} — {text(tg_id, 'reading_status')}"
+        f"{' (' + fmt(x['due']) + ')' if x.get('due') else ''}"
+        for x in reading
+    )
+    if not reading:
+        parts.append(text(tg_id, "no_reading"))
+    parts.append("\n" + text(tg_id, "book_history"))
+    parts.extend(f"• {x['title'][:120]} — {fmt(x['created'])}" for x in history)
+    if not history:
+        parts.append(text(tg_id, "no_book_history"))
+    pages = []
+    if offset:
+        pages.append(InlineKeyboardButton(
+            text=text(tg_id, "newer"),
+            callback_data=f"student:result:{max(0, offset - 10)}"))
+    if offset + len(history) < total:
+        pages.append(InlineKeyboardButton(
+            text=text(tg_id, "older"),
+            callback_data=f"student:result:{offset + 10}"))
+    await m.answer("\n".join(parts), reply_markup=kb([pages]) if pages else None)
 
 async def show_parent_menu(m: Message):
     tg_id = actor_id(m)
@@ -727,6 +816,13 @@ async def student_books(c: CallbackQuery):
         return await c.message.answer(text(c.from_user.id, "not_started"))
     await show_books(c.message, st["school_id"])
 
+@dp.callback_query(F.data.startswith("student:result"))
+async def student_results(c: CallbackQuery):
+    parts = c.data.split(":")
+    offset = max(int(parts[2]), 0) if len(parts) > 2 else 0
+    await c.answer()
+    await show_student_results(c.message, c.from_user.id, offset)
+
 @dp.callback_query(F.data == "student:code")
 async def student_code(c: CallbackQuery):
     st = one("select * from students where tg_id=? and role='student'", (c.from_user.id,))
@@ -737,6 +833,15 @@ async def student_code(c: CallbackQuery):
         q("update students set state='child_profile' where tg_id=?", (c.from_user.id,))
         return await c.message.answer(text(c.from_user.id, "child_name"))
     await issue_parent_code(c.message, c.from_user.id, st["school_id"])
+
+@dp.callback_query(F.data == "student:profile")
+async def student_profile(c: CallbackQuery):
+    st = one("select 1 from students where tg_id=? and role='student'", (c.from_user.id,))
+    await c.answer()
+    if not st:
+        return await c.message.answer(text(c.from_user.id, "not_started"))
+    q("update students set state='student_profile' where tg_id=?", (c.from_user.id,))
+    await c.message.answer(text(c.from_user.id, "profile_prompt"))
 
 async def issue_parent_code(m: Message, student_tg, school_id):
     code = secrets.token_hex(4).upper()
@@ -875,6 +980,14 @@ async def got_text(m: Message):
         await m.answer(text(m.from_user.id, "parent_linked"))
         await show_parent_menu(m)
         return
+    if st["state"] == "student_profile" and st["role"] == "student":
+        parts = [part.strip() for part in m.text.split(",", 1)]
+        if len(parts) != 2 or len(parts[0]) < 3 or not parts[1] or len(parts[0]) > 60 or len(parts[1]) > 10:
+            return await m.answer(text(m.from_user.id, "profile_error"))
+        q("update students set name=?, cls=?, state=null where tg_id=?",
+          (parts[0], parts[1], m.from_user.id))
+        await m.answer(text(m.from_user.id, "profile_saved"))
+        return await show_student_menu(m)
     if st["state"] == "child_profile" and st["role"] == "student":
         parts = [part.strip() for part in m.text.split(",", 1)]
         if len(parts) != 2 or len(parts[0]) < 3 or not parts[1] or len(parts[0]) > 60 or len(parts[1]) > 10:
@@ -935,8 +1048,11 @@ class Login(BaseModel):
 class BookIn(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int = 1
 
+class BookUpdate(BaseModel):
+    title: str; author: str = ""; genre: str = ""; total: int
+
 class Lend(BaseModel):
-    name: str; book_id: int; days: int = 14
+    name: str; cls: str = ""; book_id: int; days: int = 14
 
 def me(authorization: str = Header("")):
     u = one("select * from librarians where token=?", (authorization.replace("Bearer ", ""),)) if authorization else None
@@ -1025,6 +1141,42 @@ async def create_group_link(u=Depends(me)):
 def get_books(u=Depends(me)):
     return [dict(b, avail=avail(b)) for b in rows("select * from books where school_id=?", (u["school_id"],))]
 
+@app.put("/api/books/{book_id}")
+def update_book(book_id: int, d: BookUpdate, u=Depends(me)):
+    title, author, genre = d.title.strip(), d.author.strip(), d.genre.strip()
+    if not title:
+        raise HTTPException(400, "Kitob nomini yozing")
+    if len(title) > 200 or len(author) > 100 or len(genre) > 60:
+        raise HTTPException(400, "Nomi 200, muallif 100, janr 60 belgidan oshmasin")
+    if not 1 <= d.total <= 1000:
+        raise HTTPException(400, "Nusxalar soni 1 dan 1000 gacha bo'lishi kerak")
+    book = one("select id from books where id=? and school_id=?",
+               (book_id, u["school_id"]))
+    if not book:
+        raise HTTPException(404, "Kitob topilmadi")
+    now = int(time.time())
+    active = one(
+        "select count(*) c from res where book_id=? and "
+        "(st='olindi' or (st='band' and until>?))", (book_id, now))["c"]
+    if d.total < active:
+        raise HTTPException(
+            400, f"Nusxalar soni hozir o'quvchilardagi {active} ta faol kitobdan kam bo'lmasin")
+    q("update books set title=?, author=?, genre=?, total=? where id=? and school_id=?",
+      (title, author, genre, d.total, book_id, u["school_id"]))
+    return {"ok": True}
+
+@app.delete("/api/books/{book_id}")
+def delete_book(book_id: int, u=Depends(me)):
+    book = one("select id from books where id=? and school_id=?",
+               (book_id, u["school_id"]))
+    if not book:
+        raise HTTPException(404, "Kitob topilmadi")
+    if one("select 1 from res where book_id=? limit 1", (book_id,)):
+        raise HTTPException(
+            409, "Kitob tarixda qatnashgan; o'quvchilar tarixini saqlash uchun uni o'chirib bo'lmaydi")
+    q("delete from books where id=? and school_id=?", (book_id, u["school_id"]))
+    return {"ok": True}
+
 @app.post("/api/books")
 async def add_book(d: BookIn, u=Depends(me)):
     if not d.title.strip():
@@ -1075,17 +1227,33 @@ async def do_action(rid: int, action: str, u=Depends(me)):
     return {"ok": True}
 
 @app.post("/api/lend")
-def lend(d: Lend, u=Depends(me)):
+async def lend(d: Lend, u=Depends(me)):
     b = one("select * from books where id=? and school_id=?", (d.book_id, u["school_id"]))
-    if not b or not d.name.strip():
-        raise HTTPException(400, "O'quvchi va kitobni tanlang")
+    name, cls = d.name.strip(), d.cls.strip()
+    if not b or not name or not cls or len(name) > 60 or len(cls) > 10:
+        raise HTTPException(400, "O'quvchi, sinf va kitobni tanlang")
     if avail(b) < 1:
         raise HTTPException(400, "Bu kitob hozir qolmagan")
     now = int(time.time())
     days = min(max(d.days, 1), 60)
-    q("insert into res(school_id,book_id,tg_id,name,created,until,st,days,due) values(?,?,?,?,?,?,'olindi',?,?)",
-      (u["school_id"], b["id"], 0, d.name.strip(), now, now, days, now + days * 86400))
-    return {"ok": True}
+    matches = rows(
+        "select tg_id from students where school_id=? and role='student' "
+        "and lower(trim(name))=lower(?) and upper(trim(cls))=upper(?) "
+        "order by tg_id",
+        (u["school_id"], name, cls))
+    tg_id = matches[0]["tg_id"] if len(matches) == 1 else 0
+    due = now + days * 86400
+    q(
+        "insert into res(school_id,book_id,tg_id,name,created,until,st,days,due,cls) "
+        "values(?,?,?,?,?,?,'olindi',?,?,?)",
+        (u["school_id"], b["id"], tg_id, name, now, now, days, due, cls))
+    if len(matches) > 1:
+        return {"ok": True, "telegram": "ambiguous"}
+    if not matches:
+        return {"ok": True, "telegram": "not_linked"}
+    delivered = await notify(
+        tg_id, text(tg_id, "site_lend_notice", title=b["title"], due=fmt(due)))
+    return {"ok": True, "telegram": "sent" if delivered else "failed"}
 
 
 # ---------- O'quvchilar ro'yxati (Excel import) ----------

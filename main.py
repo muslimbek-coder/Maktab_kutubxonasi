@@ -136,6 +136,8 @@ BOT_TEXT = {
         "group_only": "Bu buyruqni kutubxona guruhida yuboring.",
         "admin_only": "Guruhni ulash uchun guruh administratori bo'lishingiz kerak.",
         "group_linked": "✅ Guruh kutubxonaga ulandi. Yangi kitoblar shu guruhga e'lon qilinadi.",
+        "group_linked_books": "✅ Guruh kutubxonaga ulandi. Avvalgi kitoblar e'loni: {sent}/{total} ta yuborildi.",
+        "group_linked_books_failed": "✅ Guruh kutubxonaga ulandi. Avvalgi kitoblar e'loni: {sent}/{total} ta yuborildi, {failed} tasi yetkazilmadi. Yetkazilmaganlarni saytdagi Telegram bo'limidan qayta yuboring.",
         "group_code": "Guruh kodi xato yoki muddati o'tgan. Saytdan yangisini yarating.",
         "book_title": "Kitob nomini yuboring:",
         "book_author": "Muallifini yuboring (noma'lum bo'lsa, - belgisi yuboring):",
@@ -239,6 +241,8 @@ BOT_TEXT = {
         "group_only": "Отправьте эту команду в библиотечной группе.",
         "admin_only": "Для подключения группы нужно быть её администратором.",
         "group_linked": "✅ Группа подключена к библиотеке. Новые книги будут опубликованы здесь.",
+        "group_linked_books": "✅ Группа подключена. Объявления о существующих книгах отправлены: {sent}/{total}.",
+        "group_linked_books_failed": "✅ Группа подключена. Объявления о существующих книгах отправлены: {sent}/{total}; не доставлено: {failed}. Повторите отправку в разделе Telegram на сайте.",
         "group_code": "Код группы неверен или просрочен. Создайте новый на сайте.",
         "book_title": "Отправьте название книги:",
         "book_author": "Отправьте автора (если неизвестен, отправьте дефис -):",
@@ -333,6 +337,8 @@ BOT_TEXT = {
         "group_only": "Send this command in the library group.",
         "admin_only": "You must be a group administrator to connect it.",
         "group_linked": "✅ Group connected to the library. New books will be announced here.",
+        "group_linked_books": "✅ Group connected. Announcements for existing books sent: {sent}/{total}.",
+        "group_linked_books_failed": "✅ Group connected. Announcements for existing books sent: {sent}/{total}; {failed} could not be delivered. Retry failed announcements in the Telegram tab on the website.",
         "group_code": "The group code is invalid or expired. Generate a new one on the website.",
         "book_title": "Send the book title:",         "book_author": "Send the author (send a dash - if unknown):",
         "book_genre": "Send the genre (send a dash - if unknown):",
@@ -648,11 +654,15 @@ async def show_librarian_menu(m: Message):
         [InlineKeyboardButton(text=text(tg_id, "add_book_button"), callback_data="librarian:addbook")],
     ]))
 
-async def publish_book(book):
+async def publish_book(book, group_ids=None):
     school = one("select name from schools where id=?", (book["school_id"],))
-    groups = rows(
-        "select telegram_group_id from library_groups where school_id=?",
-        (book["school_id"],))
+    groups = (
+        rows(
+            "select telegram_group_id from library_groups where school_id=?",
+            (book["school_id"],))
+        if group_ids is None
+        else [{"telegram_group_id": group_id} for group_id in group_ids]
+    )
     if not bot or not school or not groups:
         return False
     try:
@@ -707,6 +717,14 @@ async def publish_imported_books(books):
         results.append(await publish_book(book))
     return all(results)
 
+async def publish_existing_books_to_group(school_id, group_id):
+    books = rows("select * from books where school_id=? order by id", (school_id,))
+    sent = 0
+    for book in books:
+        if await publish_book(book, [group_id]):
+            sent += 1
+    return len(books), sent
+
 async def link_library_group(m: Message, code):
     tg_id = m.from_user.id
     if m.chat.type not in ("group", "supergroup"):
@@ -732,11 +750,25 @@ async def link_library_group(m: Message, code):
         "returning librarian_id", (code.upper(), int(time.time())))
     if not consumed or consumed["librarian_id"] != librarian["id"]:
         return await m.answer(text(tg_id, "group_code"))
-    q(
+    new_group = one(
         "insert into library_groups(school_id,telegram_group_id,telegram_group_title) "
-        "values(?,?,?) on conflict(school_id,telegram_group_id) do update set "
-        "telegram_group_title=excluded.telegram_group_title",
+        "values(?,?,?) on conflict(school_id,telegram_group_id) do nothing "
+        "returning telegram_group_id",
         (librarian["school_id"], m.chat.id, m.chat.title or ""))
+    if not new_group:
+        q("update library_groups set telegram_group_title=? "
+          "where school_id=? and telegram_group_id=?",
+          (m.chat.title or "", librarian["school_id"], m.chat.id))
+        return await m.answer(text(tg_id, "group_linked"))
+    total, sent = await publish_existing_books_to_group(
+        librarian["school_id"], m.chat.id)
+    if total and sent < total:
+        return await m.answer(text(
+            tg_id, "group_linked_books_failed",
+            sent=sent, total=total, failed=total - sent))
+    if total:
+        return await m.answer(text(
+            tg_id, "group_linked_books", sent=sent, total=total))
     await m.answer(text(tg_id, "group_linked"))
 
 @dp.message(Command("librarian"))

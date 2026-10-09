@@ -1,4 +1,5 @@
-import asyncio, logging, os, secrets, time, hashlib
+import asyncio, base64, binascii, logging, os, secrets, time, hashlib, uuid
+from pathlib import Path
 from types import SimpleNamespace
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -6,10 +7,11 @@ from html import escape
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -34,20 +36,35 @@ pool = ConnectionPool(
 SCHEMA = """
 create table if not exists schools(id serial primary key, vil text, tum text, name text, unique(vil,tum,name));
 create table if not exists librarians(id serial primary key, school_id int, name text, fam text, login text unique, pw text, token text, telegram_tg_id bigint);
-create table if not exists books(id serial primary key, school_id int, title text, author text, genre text not null default '', total int);
-create table if not exists students(tg_id bigint primary key, school_id int, name text, pending int, want int, role text, state text, requested_days int, cls text);
-create table if not exists res(id serial primary key, school_id int, book_id int, tg_id bigint, name text, created bigint, until bigint, st text, days int, due bigint, cls text);
+create table if not exists books(id serial primary key, school_id int, title text, author text, genre text not null default '', total int, description text not null default '', cover_url text not null default '', barcode text not null default '');
+create table if not exists students(tg_id bigint primary key, school_id int, name text, pending int, want int, role text, state text, requested_days int, cls text, notify_parents boolean not null default true);
+create table if not exists res(id serial primary key, school_id int, book_id int, tg_id bigint, name text, created bigint, until bigint, st text, days int, due bigint, cls text, reminder_pre_sent bigint, reminder_overdue_sent bigint, reminder_pre_parent_sent bigint, reminder_overdue_parent_sent bigint);
 create table if not exists pupils(id serial primary key, school_id int, name text, cls text, unique(school_id,name,cls));
 create table if not exists parent_children(parent_tg bigint, student_tg bigint, primary key(parent_tg, student_tg));
 create table if not exists parent_codes(code text primary key, student_tg bigint, school_id int, expires bigint);
 create table if not exists bot_users(tg_id bigint primary key, language text);
 create table if not exists library_codes(code text primary key, librarian_id int not null, purpose text not null, expires bigint not null);
 create table if not exists library_groups(school_id int not null, telegram_group_id bigint not null, telegram_group_title text, primary key(school_id, telegram_group_id));
-create table if not exists librarian_book_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, title text, author text, genre text);
+create table if not exists librarian_book_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, title text, author text, genre text, description text, cover_url text, barcode text);
+create table if not exists telegram_notifications(id serial primary key, school_id int not null, recipient_tg bigint not null, message text not null, kind text not null, parse_mode text, button_text text, button_url text, status text not null default 'failed', attempts int not null default 1, last_error text not null default '', created bigint not null, updated bigint not null, sent_at bigint);
+create index if not exists telegram_notifications_school_status_idx on telegram_notifications(school_id, status, created desc);
 alter table librarians add column if not exists telegram_tg_id bigint;
+alter table students add column if not exists notify_parents boolean not null default true;
 alter table schools add column if not exists telegram_group_id bigint;
 alter table schools add column if not exists telegram_group_title text;
 alter table books add column if not exists genre text not null default '';
+alter table books add column if not exists description text not null default '';
+alter table books add column if not exists cover_url text not null default '';
+alter table books add column if not exists barcode text not null default '';
+alter table res add column if not exists reminder_pre_sent bigint;
+alter table res add column if not exists reminder_overdue_sent bigint;
+alter table res add column if not exists reminder_pre_parent_sent bigint;
+alter table res add column if not exists reminder_overdue_parent_sent bigint;
+alter table librarian_book_drafts add column if not exists description text;
+alter table librarian_book_drafts add column if not exists cover_url text;
+alter table librarian_book_drafts add column if not exists barcode text;
+create unique index if not exists books_school_barcode_unique
+on books(school_id, barcode) where barcode <> '';
 insert into library_groups(school_id, telegram_group_id, telegram_group_title)
 select id, telegram_group_id, telegram_group_title from schools
 where telegram_group_id is not null on conflict do nothing;
@@ -99,6 +116,10 @@ BOT_TEXT = {
         "librarian": "Kutubxonachi", "student_menu": "O'quvchi bo'limi:",
         "parent_menu": "Ota-ona bo'limi:", "books_button": "📚 Kitob tanlash",
         "student_profile_button": "👤 Ism va sinfni kiritish",
+        "parent_reminder_button": "👨‍👩‍👧 Ota-onaga eslatma",
+        "parent_reminder_enabled": "✅ Ota-onaga eslatmalar yoqilgan",
+        "parent_reminder_disabled": "🔕 Ota-onaga eslatmalar o'chirilgan",
+        "parent_reminder_changed": "Ota-onaga eslatma sozlamasi o'zgartirildi.",
         "profile_prompt": "Ism-familiyangiz va sinfingizni vergul bilan yozing (masalan: Aziza Karimova, 7-A):",
         "profile_saved": "✅ Ism-familiya va sinf saqlandi.",
         "parent_code_button": "🔗 Ota-onaga ulanish kodi", "parent_add": "➕ Farzand qo'shish",
@@ -119,6 +140,14 @@ BOT_TEXT = {
         "book_title": "Kitob nomini yuboring:",
         "book_author": "Muallifini yuboring (noma'lum bo'lsa, - belgisi yuboring):",
         "book_genre": "Janrini yuboring (noma'lum bo'lsa, - belgisi yuboring):",
+        "book_description": "Kitob haqida qisqacha ma'lumot yuboring (bo'sh qoldirish uchun -):",
+        "book_barcode": "Kitob shtrix-kodini/QR matnini yuboring (bo'lmasa -):",
+        "book_cover": "Muqova rasmi URL manzilini yuboring (bo'lmasa -):",
+        "cover_link": "🖼 Muqovani ko'rish",
+        "book_description_error": "Tavsif 1000 belgidan oshmasin. Qayta yuboring:",
+        "book_barcode_error": "Kod 80 belgidan oshmasin. Qayta yuboring:",
+        "book_cover_error": "Muqova havolasi http:// yoki https:// bilan boshlanishi kerak. Qayta yuboring:",
+        "barcode_taken": "Bu shtrix-kod boshqa kitobda ishlatilgan.",
         "book_total": "Nechta nusxa bor? 1 dan 1000 gacha son kiriting:",
         "book_count_error": "Nusxalar sonini 1 dan 1000 gacha butun son bilan kiriting.",
         "book_added": "✅ “{title}” kitobi qo'shildi. Ulangan guruhga e'lon yuborildi.",
@@ -163,6 +192,8 @@ BOT_TEXT = {
         "returned_status": "Qaytarilgan", "cancelled_status": "Bekor qilingan",
         "expired_status": "Band muddati tugagan",
         "took_notice": "📗 “{title}” kitobi olingani belgilandi.\nQaytarish muddati: {due}",
+        "due_reminder": "⏰ “{title}” kitobini ertaga ({due}) qaytarish vaqti keladi.",
+        "overdue_reminder": "⚠️ “{title}” kitobini qaytarish muddati o'tdi. Iltimos, kutubxonaga qaytaring.",
         "site_lend_notice": "📗 Kutubxonachidan “{title}” kitobini oldingiz.\nQaytarish muddati: {due}",
         "my_results": "📚 Natijam",
         "reading_now": "📖 Hozir o'qiyotgan kitoblaringiz:",
@@ -188,6 +219,10 @@ BOT_TEXT = {
         "student_menu": "Раздел ученика:", "parent_menu": "Раздел родителя:",
         "books_button": "📚 Выбрать книгу",
         "student_profile_button": "👤 Ввести имя и класс",
+        "parent_reminder_button": "👨‍👩‍👧 Напоминания родителю",
+        "parent_reminder_enabled": "✅ Напоминания родителю включены",
+        "parent_reminder_disabled": "🔕 Напоминания родителю выключены",
+        "parent_reminder_changed": "Настройка напоминаний для родителя изменена.",
         "profile_prompt": "Введите имя, фамилию и класс через запятую (например: Aziza Karimova, 7-A):",
         "profile_saved": "✅ Имя и класс сохранены.",
         "parent_code_button": "🔗 Код для родителя",
@@ -208,6 +243,14 @@ BOT_TEXT = {
         "book_title": "Отправьте название книги:",
         "book_author": "Отправьте автора (если неизвестен, отправьте дефис -):",
         "book_genre": "Отправьте жанр (если неизвестен, отправьте дефис -):",
+        "book_description": "Кратко опишите книгу (или отправьте -):",
+        "book_barcode": "Отправьте штрих-код/QR-код книги (или -):",
+        "book_cover": "Отправьте URL обложки (или -):",
+        "cover_link": "🖼 Посмотреть обложку",
+        "book_description_error": "Описание должно быть не длиннее 1000 символов. Повторите:",
+        "book_barcode_error": "Код не должен быть длиннее 80 символов. Повторите:",
+        "book_cover_error": "Ссылка на обложку должна начинаться с http:// или https://. Повторите:",
+        "barcode_taken": "Этот штрих-код уже используется другой книгой.",
         "book_total": "Сколько экземпляров? Введите число от 1 до 1000:",
         "book_count_error": "Введите целое число экземпляров от 1 до 1000.",
         "book_added": "✅ Книга «{title}» добавлена. Объявление отправлено в подключённую группу.",
@@ -242,6 +285,8 @@ BOT_TEXT = {
         "returned_status": "Возвращена", "cancelled_status": "Отменена",
         "expired_status": "Срок брони истёк", "not_found": "Не найдено.",
         "took_notice": "📗 Отмечено получение книги «{title}».\nВерните до: {due}",
+        "due_reminder": "⏰ Книгу «{title}» нужно вернуть завтра ({due}).",
+        "overdue_reminder": "⚠️ Срок возврата книги «{title}» истёк. Пожалуйста, верните её в библиотеку.",
         "site_lend_notice": "📗 Вы получили у библиотекаря книгу «{title}».\nВернуть до: {due}",
         "my_results": "📚 Мои результаты",
         "reading_now": "📖 Сейчас вы читаете:",
@@ -267,6 +312,10 @@ BOT_TEXT = {
         "librarian": "Librarian", "student_menu": "Student menu:", "parent_menu": "Parent menu:",
         "books_button": "📚 Browse books",
         "student_profile_button": "👤 Enter name and class",
+        "parent_reminder_button": "👨‍👩‍👧 Parent reminders",
+        "parent_reminder_enabled": "✅ Parent reminders are on",
+        "parent_reminder_disabled": "🔕 Parent reminders are off",
+        "parent_reminder_changed": "Parent reminder setting updated.",
         "profile_prompt": "Enter your full name and class separated by a comma (for example: Aziza Karimova, 7-A):",
         "profile_saved": "✅ Name and class saved.",
         "parent_code_button": "🔗 Parent linking code",
@@ -287,6 +336,14 @@ BOT_TEXT = {
         "group_code": "The group code is invalid or expired. Generate a new one on the website.",
         "book_title": "Send the book title:",         "book_author": "Send the author (send a dash - if unknown):",
         "book_genre": "Send the genre (send a dash - if unknown):",
+        "book_description": "Send a short description (or send -):",
+        "book_barcode": "Send the book barcode/QR text (or -):",
+        "book_cover": "Send the cover image URL (or -):",
+        "cover_link": "🖼 View cover",
+        "book_description_error": "The description must be no longer than 1000 characters. Try again:",
+        "book_barcode_error": "The code must be no longer than 80 characters. Try again:",
+        "book_cover_error": "The cover link must start with http:// or https://. Try again:",
+        "barcode_taken": "This barcode is already assigned to another book.",
         "book_total": "How many copies? Enter a number from 1 to 1000:",
         "book_count_error": "Enter a whole number of copies from 1 to 1000.",
         "book_added": "✅ “{title}” was added. An announcement was sent to the connected group.",
@@ -326,6 +383,8 @@ BOT_TEXT = {
         "returned_status": "Returned", "cancelled_status": "Cancelled",
         "expired_status": "Reservation expired", "not_found": "Not found.",
         "took_notice": "📗 Pickup of “{title}” was recorded.\nReturn by: {due}",
+        "due_reminder": "⏰ “{title}” is due tomorrow ({due}).",
+        "overdue_reminder": "⚠️ “{title}” is overdue. Please return it to the library.",
         "site_lend_notice": "📗 You borrowed “{title}” from the librarian.\nReturn by: {due}",
         "my_results": "📚 My results",
         "reading_now": "📖 Currently reading:",
@@ -362,15 +421,50 @@ def kb(btns):
 def actor_id(m: Message):
     return m.chat.id if m.chat.type == "private" else m.from_user.id
 
-async def notify(tg, text):
+async def notify(tg, text, school_id=None):
+    if school_id is None:
+        student = one("select school_id from students where tg_id=?", (tg,))
+        school_id = student["school_id"] if student else None
+        if school_id is None:
+            parent = one(
+                "select s.school_id from parent_children pc "
+                "join students s on s.tg_id=pc.student_tg "
+                "where pc.parent_tg=? order by s.school_id limit 1", (tg,))
+            school_id = parent["school_id"] if parent else None
+    if school_id is None:
+        log.error("Telegram xabari uchun maktab topilmadi (tg_id=%s)", tg)
+        return False
+    return await send_tracked_notification(school_id, tg, text, "direct")
+
+async def deliver_telegram_message(
+        recipient_tg, message, parse_mode=None, button_text=None, button_url=None):
     if not bot:
-        return False
+        raise RuntimeError("Telegram bot sozlanmagan")
+    markup = None
+    if button_text and button_url:
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=button_text, url=button_url)
+        ]])
+    await bot.send_message(
+        recipient_tg, message, parse_mode=parse_mode, reply_markup=markup)
+
+async def send_tracked_notification(
+        school_id, recipient_tg, message, kind, parse_mode=None,
+        button_text=None, button_url=None):
+    now = int(time.time())
     try:
-        await bot.send_message(tg, text)
-        return True
+        await deliver_telegram_message(
+            recipient_tg, message, parse_mode, button_text, button_url)
     except Exception as e:
-        log.warning("Telegram xabari yuborilmadi (tg_id=%s): %s", tg, e)
+        q(
+            "insert into telegram_notifications(school_id,recipient_tg,message,kind,"
+            "parse_mode,button_text,button_url,status,attempts,last_error,created,updated) "
+            "values(?,?,?,?,?,?,?,'failed',1,?,?,?)",
+            (school_id, recipient_tg, message, kind, parse_mode, button_text,
+             button_url, str(e)[:1000], now, now))
+        log.warning("Telegram xabari yuborilmadi (tg_id=%s): %s", recipient_tg, e)
         return False
+    return True
 
 async def show_viloyatlar(m: Message):
     tg_id = actor_id(m)
@@ -409,6 +503,11 @@ async def show_student_menu(m: Message):
         [InlineKeyboardButton(text=text(tg_id, "books_button"), callback_data="student:books")],
         [InlineKeyboardButton(text=text(tg_id, "my_results"), callback_data="student:result")],
         [InlineKeyboardButton(text=text(tg_id, "student_profile_button"), callback_data="student:profile")],
+        [InlineKeyboardButton(
+            text=text(tg_id, "parent_reminder_enabled" if (
+                one("select notify_parents from students where tg_id=?", (tg_id,)) or {}
+            ).get("notify_parents", True) else "parent_reminder_disabled"),
+            callback_data="student:parent-reminders")],
         [InlineKeyboardButton(text=text(tg_id, "parent_code_button"), callback_data="student:code")],
     ]))
 
@@ -465,8 +564,35 @@ async def show_books(m: Message, school_id):
     available_label = text(tg_id, "available").lower()
     await m.answer(text(tg_id, "book_list"), reply_markup=kb(
         [[InlineKeyboardButton(
-            text=f"{b['title'][:40]} ({avail(b)}/{b['total']} {available_label})",
+            text=f"{b['title'][:30]} — {(b.get('author') or '—')[:20]} ({avail(b)}/{b['total']} {available_label})",
             callback_data=f"b:{b['id']}")] for b in books]))
+
+async def show_book_details(m: Message, tg_id: int, book_id: int):
+    book = one("select * from books where id=?", (book_id,))
+    student = one("select school_id from students where tg_id=? and role='student'",
+                  (tg_id,))
+    if not book or not student or student["school_id"] != book["school_id"]:
+        return await m.answer(text(tg_id, "bad_book"))
+    details = (
+        f"📖 <b>{escape(book['title'])}</b>\n"
+        f"✍️ {escape(book.get('author') or '—')}\n"
+        f"🎭 {escape(book.get('genre') or '—')}\n"
+        f"📝 {escape(book.get('description') or '—')}"
+    )
+    if book.get("cover_url"):
+        cover_path = Path("static") / Path(book["cover_url"]).name
+        if cover_path.is_file():
+            await m.answer_photo(FSInputFile(str(cover_path)))
+        if book["cover_url"].startswith(("https://", "http://")):
+            details += (
+                f'\n<a href="{escape(book["cover_url"])}">'
+                f'{escape(text(tg_id, "cover_link"))}</a>')
+    await m.answer(
+        details, parse_mode="HTML",
+        reply_markup=kb([[
+            InlineKeyboardButton(
+                text=text(tg_id, "reserve"), callback_data=f"reserve-book:{book_id}")
+        ]]))
 
 async def reserve(m: Message, tg, book_id, days, name, cls):
     st = one("select * from students where tg_id=?", (tg,))
@@ -488,7 +614,7 @@ async def reserve(m: Message, tg, book_id, days, name, cls):
         "ru": f"📚 Ваш ребёнок {name} ({cls}) забронировал книгу «{b['title']}».",
         "en": f"📚 Your child {name} ({cls}) reserved “{b['title']}”.",
     }
-    await notify_parents(tg, parent_notices)
+    await notify_parents(tg, parent_notices, school_id=st["school_id"])
 
 async def ask_days(m: Message, tg, book_id):
     book = one("select school_id from books where id=?", (book_id,))
@@ -502,13 +628,19 @@ async def ask_days(m: Message, tg, book_id):
         (tg, book["school_id"], book_id))
     await m.answer(text(tg, "reserve_days"))
 
-async def notify_parents(student_tg, content):
+async def notify_parents(student_tg, content, school_id=None):
     parents = rows("select parent_tg from parent_children where student_tg=?", (student_tg,))
+    if school_id is None:
+        student = one("select school_id from students where tg_id=?", (student_tg,))
+        school_id = student["school_id"] if student else None
+    delivered = False
     for parent in parents:
         parent_id = parent["parent_tg"]
         message = (content.get(user_language(parent_id), content.get("uz"))
                    if isinstance(content, dict) else content)
-        await notify(parent_id, message)
+        delivered = await send_tracked_notification(
+            school_id, parent_id, message, "parent") or delivered
+    return delivered
 
 async def show_librarian_menu(m: Message):
     tg_id = actor_id(m)
@@ -534,36 +666,34 @@ async def publish_book(book):
         safe_author = escape(book.get("author") or "—")
         safe_genre = escape(book.get("genre") or "—")
         safe_school = escape(school["name"])
+        safe_description = escape(book.get("description") or "")
         message = (
             "📚 <b>YANGI KITOB KUTUBXONADA!</b>\n"
             "🇺🇿 O'zbekcha\n"
             f"📖 <b>{safe_title}</b>\n✍️ Muallif: {safe_author}\n"
             f"🎭 Janr: {safe_genre}\n📦 Mavjud: {available}/{book['total']} nusxa\n"
+            f"{'📝 ' + safe_description + chr(10) if safe_description else ''}"
             f"🏫 {safe_school}\n\n"
             "📚 <b>НОВАЯ КНИГА В БИБЛИОТЕКЕ!</b>\n"
             f"📖 <b>{safe_title}</b>\n✍️ Автор: {safe_author}\n"
             f"🎭 Жанр: {safe_genre}\n📦 В наличии: {available}/{book['total']} экз.\n"
+            f"{'📝 ' + safe_description + chr(10) if safe_description else ''}"
             f"🏫 {safe_school}\n\n"
             "📚 <b>NEW BOOK AT THE LIBRARY!</b>\n"
             f"📖 <b>{safe_title}</b>\n✍️ Author: {safe_author}\n"
             f"🎭 Genre: {safe_genre}\n📦 Available: {available}/{book['total']} copies\n"
+            f"{'📝 ' + safe_description + chr(10) if safe_description else ''}"
             f"🏫 {safe_school}\n\n"
             "📲 Bot orqali oldindan band qiling / Бронируйте в боте / Reserve in the bot"
         )
         sent = 0
         for group in groups:
-            try:
-                await bot.send_message(
-                    group["telegram_group_id"], message, parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                        InlineKeyboardButton(
-                            text="📲 Band qilish / Бронь / Reserve", url=link)
-                    ]]))
+            delivered = await send_tracked_notification(
+                book["school_id"], group["telegram_group_id"], message,
+                "book_announcement", parse_mode="HTML",
+                button_text="📲 Band qilish / Бронь / Reserve", button_url=link)
+            if delivered:
                 sent += 1
-            except Exception:
-                log.exception(
-                    "Yangi kitob e'loni yuborilmadi (book_id=%s, group_id=%s)",
-                    book["id"], group["telegram_group_id"])
         return sent == len(groups)
     except Exception:
         log.exception("Yangi kitob e'loni yuborilmadi (book_id=%s)", book["id"])
@@ -661,7 +791,8 @@ async def begin_add_book(m: Message, tg_id: int | None = None):
         "insert into librarian_book_drafts(tg_id,librarian_id,school_id,current_step) "
         "values(?,?,?,'title') on conflict(tg_id) do update set "
         "librarian_id=excluded.librarian_id, school_id=excluded.school_id, "
-        "current_step='title', title=null, author=null, genre=null",
+        "current_step='title', title=null, author=null, genre=null, "
+        "description=null, cover_url=null, barcode=null",
         (tg_id, librarian["id"], librarian["school_id"]))
     await m.answer(text(tg_id, "book_title"))
 
@@ -843,6 +974,20 @@ async def student_profile(c: CallbackQuery):
     q("update students set state='student_profile' where tg_id=?", (c.from_user.id,))
     await c.message.answer(text(c.from_user.id, "profile_prompt"))
 
+@dp.callback_query(F.data == "student:parent-reminders")
+async def toggle_parent_reminders(c: CallbackQuery):
+    student = one(
+        "select notify_parents from students where tg_id=? and role='student'",
+        (c.from_user.id,))
+    await c.answer()
+    if not student:
+        return await c.message.answer(text(c.from_user.id, "not_started"))
+    enabled = not student["notify_parents"]
+    q("update students set notify_parents=? where tg_id=?",
+      (enabled, c.from_user.id))
+    await c.message.answer(text(c.from_user.id, "parent_reminder_changed"))
+    await show_student_menu(c.message)
+
 async def issue_parent_code(m: Message, student_tg, school_id):
     code = secrets.token_hex(4).upper()
     expires = int(time.time()) + 900
@@ -915,7 +1060,15 @@ async def pick_book(c: CallbackQuery):
     st = one("select * from students where tg_id=? and role='student'", (c.from_user.id,))
     if not st:
         return await c.message.answer(text(c.from_user.id, "not_started"))
-    await ask_days(c.message, c.from_user.id, int(c.data[2:]))
+    await show_book_details(c.message, c.from_user.id, int(c.data[2:]))
+
+@dp.callback_query(F.data.startswith("reserve-book:"))
+async def reserve_book_details(c: CallbackQuery):
+    await c.answer()
+    book_id = c.data.split(":", 1)[1]
+    if not book_id.isdigit():
+        return await c.message.answer(text(c.from_user.id, "bad_book"))
+    await ask_days(c.message, c.from_user.id, int(book_id))
 
 @dp.message(F.text & ~F.text.startswith("/"))
 async def got_text(m: Message):
@@ -943,16 +1096,43 @@ async def got_text(m: Message):
             value = "" if value in ("-", "—") else value
             if len(value) > 60:
                 return await m.answer(text(m.from_user.id, "book_genre_error"))
-            q("update librarian_book_drafts set genre=?, current_step='total' where tg_id=?",
+            q("update librarian_book_drafts set genre=?, current_step='description' where tg_id=?",
+              (value, m.from_user.id))
+            return await m.answer(text(m.from_user.id, "book_description"))
+        if draft["current_step"] == "description":
+            value = "" if value in ("-", "—") else value
+            if len(value) > 1000:
+                return await m.answer(text(m.from_user.id, "book_description_error"))
+            q("update librarian_book_drafts set description=?, current_step='barcode' where tg_id=?",
+              (value, m.from_user.id))
+            return await m.answer(text(m.from_user.id, "book_barcode"))
+        if draft["current_step"] == "barcode":
+            value = "" if value in ("-", "—") else value
+            if len(value) > 80:
+                return await m.answer(text(m.from_user.id, "book_barcode_error"))
+            q("update librarian_book_drafts set barcode=?, current_step='cover' where tg_id=?",
+              (value, m.from_user.id))
+            return await m.answer(text(m.from_user.id, "book_cover"))
+        if draft["current_step"] == "cover":
+            value = "" if value in ("-", "—") else value
+            if value and not value.startswith(("https://", "http://")):
+                return await m.answer(text(m.from_user.id, "book_cover_error"))
+            q("update librarian_book_drafts set cover_url=?, current_step='total' where tg_id=?",
               (value, m.from_user.id))
             return await m.answer(text(m.from_user.id, "book_total"))
         if draft["current_step"] == "total":
             if not value.isdigit() or not 1 <= int(value) <= 1000:
                 return await m.answer(text(m.from_user.id, "book_count_error"))
+            if draft["barcode"] and one(
+                    "select id from books where school_id=? and barcode=?",
+                    (draft["school_id"], draft["barcode"])):
+                return await m.answer(text(m.from_user.id, "barcode_taken"))
             book = one(
-                "insert into books(school_id,title,author,genre,total) values(?,?,?,?,?) returning *",
+                "insert into books(school_id,title,author,genre,total,description,cover_url,barcode) "
+                "values(?,?,?,?,?,?,?,?) returning *",
                 (draft["school_id"], draft["title"], draft["author"] or "",
-                 draft["genre"] or "", int(value)))
+                 draft["genre"] or "", int(value), draft["description"] or "",
+                 draft["cover_url"] or "", draft["barcode"] or ""))
             q("delete from librarian_book_drafts where tg_id=?", (m.from_user.id,))
             published = await publish_book(book)
             school = one("select 1 from library_groups where school_id=? limit 1",
@@ -1021,7 +1201,54 @@ async def expirer():
         now = int(time.time())
         for x in rows("select r.*, b.title from res r join books b on b.id=r.book_id where r.st='band' and r.until<=?", (now,)):
             q("update res set st='muddati' where id=?", (x["id"],))
-            await notify(x["tg_id"], text(x["tg_id"], "expired_notice", title=x["title"]))
+            if x["tg_id"]:
+                await notify(
+                    x["tg_id"],
+                    text(x["tg_id"], "expired_notice", title=x["title"]),
+                    school_id=x["school_id"])
+        for x in rows(
+            "select r.id, r.school_id, r.tg_id, r.due, r.reminder_pre_sent, "
+            "r.reminder_overdue_sent, r.reminder_pre_parent_sent, "
+            "r.reminder_overdue_parent_sent, b.title, s.notify_parents "
+            "from res r join books b on b.id=r.book_id "
+            "left join students s on s.tg_id=r.tg_id "
+            "where r.st='olindi' and r.tg_id<>0 and r.due is not null "
+            "and ((r.due>? and r.due<=? and "
+            "(r.reminder_pre_sent is null or "
+            "(s.notify_parents is not false and exists "
+            "(select 1 from parent_children pc where pc.student_tg=r.tg_id) "
+            "and r.reminder_pre_parent_sent is null))) "
+            "or (r.due<=? and (r.reminder_overdue_sent is null "
+            "or r.reminder_overdue_sent<=? or "
+            "(s.notify_parents is not false and "
+            "exists (select 1 from parent_children pc where pc.student_tg=r.tg_id) and "
+            "(r.reminder_overdue_parent_sent is null or "
+            "r.reminder_overdue_parent_sent<=?)))))",
+            (now, now + 86400, now, now - 86400, now - 86400)):
+            overdue = x["due"] <= now
+            key = "overdue_reminder" if overdue else "due_reminder"
+            messages = {
+                language: BOT_TEXT[language][key].format(
+                    title=x["title"], due=fmt(x["due"]))
+                for language in BOT_TEXT
+            }
+            column = "reminder_overdue_sent" if overdue else "reminder_pre_sent"
+            if x[column] is None or (overdue and x[column] <= now - 86400):
+                await notify(
+                    x["tg_id"], messages[user_language(x["tg_id"])],
+                    school_id=x["school_id"])
+                q(f"update res set {column}=? where id=? and st='olindi'",
+                  (now, x["id"]))
+            if x["notify_parents"] is not False:
+                parent_column = (
+                    "reminder_overdue_parent_sent" if overdue
+                    else "reminder_pre_parent_sent")
+                if (x[parent_column] is None
+                        or (overdue and x[parent_column] <= now - 86400)):
+                    await notify_parents(
+                        x["tg_id"], messages, school_id=x["school_id"])
+                    q(f"update res set {parent_column}=? where id=? and st='olindi'",
+                      (now, x["id"]))
         await asyncio.sleep(300)
 
 # ---------- Veb sayt API ----------
@@ -1038,6 +1265,7 @@ async def lifespan(app):
     pool.close()
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class Reg(BaseModel):
     name: str; fam: str; vil: str; tum: str; maktab: str; login: str; parol: str
@@ -1047,9 +1275,39 @@ class Login(BaseModel):
 
 class BookIn(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int = 1
+    description: str = ""; cover_url: str = ""; barcode: str = ""
 
 class BookUpdate(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int
+    description: str = ""; cover_url: str = ""; barcode: str = ""
+
+class CoverUpload(BaseModel):
+    data_url: str
+
+def store_cover(data_url: str) -> str:
+    try:
+        header, encoded = data_url.split(",", 1)
+        image = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(400, "Muqova rasmi noto'g'ri") from exc
+    if len(image) > 2_500_000:
+        raise HTTPException(413, "Muqova rasmi 2.5 MB dan kichik bo'lishi kerak")
+    formats = {
+        "data:image/jpeg;base64": (b"\xff\xd8\xff", ".jpg"),
+        "data:image/png;base64": (b"\x89PNG\r\n\x1a\n", ".png"),
+        "data:image/gif;base64": (b"GIF8", ".gif"),
+        "data:image/webp;base64": (b"RIFF", ".webp"),
+    }
+    file_format = formats.get(header.lower())
+    if not file_format or not image.startswith(file_format[0]):
+        raise HTTPException(400, "Faqat JPEG, PNG, GIF yoki WebP rasmi qabul qilinadi")
+    if file_format[1] == ".webp" and image[8:12] != b"WEBP":
+        raise HTTPException(400, "WebP rasmi noto'g'ri")
+    name = f"{uuid.uuid4().hex}{file_format[1]}"
+    directory = Path("static") / "uploads"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_bytes(image)
+    return f"/static/uploads/{name}"
 
 class Lend(BaseModel):
     name: str; cls: str = ""; book_id: int; days: int = 14
@@ -1059,6 +1317,12 @@ def me(authorization: str = Header("")):
     if not u:
         raise HTTPException(401, "Kirish kerak")
     return u
+
+@app.post("/api/book-covers")
+def upload_book_cover(d: CoverUpload, u=Depends(me)):
+    if len(d.data_url) > 3_400_000:
+        raise HTTPException(413, "Muqova rasmi 2.5 MB dan kichik bo'lishi kerak")
+    return {"cover_url": store_cover(d.data_url)}
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def index():
@@ -1103,6 +1367,46 @@ def get_telegram_status(u=Depends(me)):
         "groups": groups,
     }
 
+@app.get("/api/telegram/notifications")
+def get_telegram_notifications(u=Depends(me)):
+    now = int(time.time())
+    return rows(
+        "select id, recipient_tg, message, kind, status, attempts, last_error, "
+        "created, updated, sent_at from telegram_notifications "
+        "where school_id=? and (status<>'sending' or updated<=?) order by "
+        "case when status='failed' or status='sending' then 0 else 1 end, "
+        "created desc limit 100",
+        (u["school_id"], now - 120))
+
+@app.post("/api/telegram/notifications/{notification_id}/retry")
+async def retry_telegram_notification(notification_id: int, u=Depends(me)):
+    now = int(time.time())
+    notification = one(
+        "update telegram_notifications set status='sending', attempts=attempts+1, "
+        "updated=? where id=? and school_id=? and "
+        "(status='failed' or (status='sending' and updated<=?)) returning *",
+        (now, notification_id, u["school_id"], now - 120))
+    if not notification:
+        raise HTTPException(404, "Qayta yuboriladigan xabar topilmadi yoki u allaqachon yuborilmoqda")
+    try:
+        await deliver_telegram_message(
+            notification["recipient_tg"], notification["message"],
+            notification["parse_mode"], notification["button_text"],
+            notification["button_url"])
+    except Exception as e:
+        q(
+            "update telegram_notifications set status='failed', last_error=?, "
+            "updated=? where id=? and school_id=?",
+            (str(e)[:1000], int(time.time()), notification_id, u["school_id"]))
+        log.warning("Telegram xabari qayta yuborilmadi (notification_id=%s): %s",
+                    notification_id, e)
+        return {"ok": True, "status": "failed"}
+    q(
+        "update telegram_notifications set status='sent', last_error='', "
+        "updated=?, sent_at=? where id=? and school_id=?",
+        (int(time.time()), int(time.time()), notification_id, u["school_id"]))
+    return {"ok": True, "status": "sent"}
+
 @app.post("/api/telegram/access-code")
 async def create_librarian_code(u=Depends(me)):
     if not bot:
@@ -1141,13 +1445,52 @@ async def create_group_link(u=Depends(me)):
 def get_books(u=Depends(me)):
     return [dict(b, avail=avail(b)) for b in rows("select * from books where school_id=?", (u["school_id"],))]
 
+@app.get("/api/dashboard")
+def get_dashboard(u=Depends(me)):
+    now = int(time.time())
+    counts = one(
+        "select coalesce(sum(total),0) total_copies, count(*) book_titles from books "
+        "where school_id=?", (u["school_id"],))
+    active = one(
+        "select count(*) c from res where school_id=? and "
+        "(st='olindi' or (st='band' and until>?))",
+        (u["school_id"], now))["c"]
+    reserved = one(
+        "select count(*) c from res where school_id=? and st='band' and until>?",
+        (u["school_id"], now))["c"]
+    borrowed = one(
+        "select count(*) c from res where school_id=? and st='olindi'",
+        (u["school_id"],))["c"]
+    overdue = one(
+        "select count(*) c from res where school_id=? and st='olindi' and due<?",
+        (u["school_id"], now))["c"]
+    return {
+        "book_titles": counts["book_titles"],
+        "total_copies": counts["total_copies"],
+        "borrowed": borrowed,
+        "available": max(counts["total_copies"] - active, 0),
+        "reserved": reserved,
+        "overdue": overdue,
+    }
+
+def validate_book_fields(title: str, author: str, genre: str, description: str,
+                         cover_url: str, barcode: str) -> tuple[str, str, str, str, str, str]:
+    values = (title.strip(), author.strip(), genre.strip(), description.strip(),
+              cover_url.strip(), barcode.strip())
+    if not values[0]:
+        raise HTTPException(400, "Kitob nomini yozing")
+    if len(values[0]) > 200 or len(values[1]) > 100 or len(values[2]) > 60:
+        raise HTTPException(400, "Nomi 200, muallif 100, janr 60 belgidan oshmasin")
+    if len(values[3]) > 1000 or len(values[5]) > 80:
+        raise HTTPException(400, "Tavsif 1000, shtrix-kod 80 belgidan oshmasin")
+    if values[4] and not values[4].startswith(("https://", "http://", "/static/uploads/")):
+        raise HTTPException(400, "Muqova havolasi http:// yoki https:// bilan boshlanishi kerak")
+    return values
+
 @app.put("/api/books/{book_id}")
 def update_book(book_id: int, d: BookUpdate, u=Depends(me)):
-    title, author, genre = d.title.strip(), d.author.strip(), d.genre.strip()
-    if not title:
-        raise HTTPException(400, "Kitob nomini yozing")
-    if len(title) > 200 or len(author) > 100 or len(genre) > 60:
-        raise HTTPException(400, "Nomi 200, muallif 100, janr 60 belgidan oshmasin")
+    title, author, genre, description, cover_url, barcode = validate_book_fields(
+        d.title, d.author, d.genre, d.description, d.cover_url, d.barcode)
     if not 1 <= d.total <= 1000:
         raise HTTPException(400, "Nusxalar soni 1 dan 1000 gacha bo'lishi kerak")
     book = one("select id from books where id=? and school_id=?",
@@ -1161,8 +1504,15 @@ def update_book(book_id: int, d: BookUpdate, u=Depends(me)):
     if d.total < active:
         raise HTTPException(
             400, f"Nusxalar soni hozir o'quvchilardagi {active} ta faol kitobdan kam bo'lmasin")
-    q("update books set title=?, author=?, genre=?, total=? where id=? and school_id=?",
-      (title, author, genre, d.total, book_id, u["school_id"]))
+    duplicate = one(
+        "select id from books where school_id=? and barcode=? and barcode<>'' and id<>?",
+        (u["school_id"], barcode, book_id))
+    if duplicate:
+        raise HTTPException(409, "Bu shtrix-kod boshqa kitobda ishlatilgan")
+    q("update books set title=?, author=?, genre=?, total=?, description=?, cover_url=?, "
+      "barcode=? where id=? and school_id=?",
+      (title, author, genre, d.total, description, cover_url, barcode,
+       book_id, u["school_id"]))
     return {"ok": True}
 
 @app.delete("/api/books/{book_id}")
@@ -1179,14 +1529,17 @@ def delete_book(book_id: int, u=Depends(me)):
 
 @app.post("/api/books")
 async def add_book(d: BookIn, u=Depends(me)):
-    if not d.title.strip():
-        raise HTTPException(400, "Kitob nomini yozing")
-    if len(d.title.strip()) > 200 or len(d.author.strip()) > 100 or len(d.genre.strip()) > 60:
-        raise HTTPException(400, "Nomi 200, muallif 100, janr 60 belgidan oshmasin")
+    title, author, genre, description, cover_url, barcode = validate_book_fields(
+        d.title, d.author, d.genre, d.description, d.cover_url, d.barcode)
+    if not 1 <= d.total <= 1000:
+        raise HTTPException(400, "Nusxalar soni 1 dan 1000 gacha bo'lishi kerak")
+    if barcode and one("select id from books where school_id=? and barcode=?",
+                       (u["school_id"], barcode)):
+        raise HTTPException(409, "Bu shtrix-kod boshqa kitobda ishlatilgan")
     book = one(
-        "insert into books(school_id,title,author,genre,total) values(?,?,?,?,?) returning *",
-        (u["school_id"], d.title.strip(), d.author.strip(), d.genre.strip(),
-         min(max(d.total, 1), 1000)))
+        "insert into books(school_id,title,author,genre,total,description,cover_url,barcode) "
+        "values(?,?,?,?,?,?,?,?) returning *",
+        (u["school_id"], title, author, genre, d.total, description, cover_url, barcode))
     announced = await publish_book(book)
     return {"ok": True, "announced": announced}
 
@@ -1218,12 +1571,15 @@ async def do_action(rid: int, action: str, u=Depends(me)):
         for language in BOT_TEXT
     }
     msg = localized_notices[user_language(r["tg_id"])]
-    await notify(r["tg_id"], msg)
     if r["tg_id"]:
-        await notify_parents(r["tg_id"], {
-            language: BOT_TEXT[language]["child_prefix"] + localized_notices[language]
-            for language in BOT_TEXT
-        })
+        await notify(r["tg_id"], msg, school_id=r["school_id"])
+        await notify_parents(
+            r["tg_id"],
+            {
+                language: BOT_TEXT[language]["child_prefix"] + localized_notices[language]
+                for language in BOT_TEXT
+            },
+            school_id=r["school_id"])
     return {"ok": True}
 
 @app.post("/api/lend")
@@ -1252,7 +1608,8 @@ async def lend(d: Lend, u=Depends(me)):
     if not matches:
         return {"ok": True, "telegram": "not_linked"}
     delivered = await notify(
-        tg_id, text(tg_id, "site_lend_notice", title=b["title"], due=fmt(due)))
+        tg_id, text(tg_id, "site_lend_notice", title=b["title"], due=fmt(due)),
+        school_id=u["school_id"])
     return {"ok": True, "telegram": "sent" if delivered else "failed"}
 
 
@@ -1289,6 +1646,7 @@ def del_pupil(pid: int, u=Depends(me)):
 # ---------- Kitoblarni Excel orqali import ----------
 class BookRow(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int = 1
+    description: str = ""; cover_url: str = ""; barcode: str = ""
 
 class BooksIn(BaseModel):
     items: list[BookRow]
@@ -1296,25 +1654,30 @@ class BooksIn(BaseModel):
 @app.post("/api/books/import")
 async def import_books(d: BooksIn, u=Depends(me)):
     sid, skipped = u["school_id"], 0
+    existing = rows("select title, author, barcode from books where school_id=?", (sid,))
     have = {(r["title"].lower(), (r["author"] or "").lower())
-            for r in rows("select title, author from books where school_id=?", (sid,))}
+            for r in existing}
+    barcodes = {r["barcode"] for r in existing if r["barcode"]}
     to_add = []
     for b in d.items[:5000]:
-        ti, au, genre = b.title.strip()[:200], b.author.strip()[:100], b.genre.strip()[:60]
-        if not ti:
+        if not b.title.strip():
             continue
+        ti, au, genre, description, cover_url, barcode = validate_book_fields(
+            b.title, b.author, b.genre, b.description, b.cover_url, b.barcode)
         key = (ti.lower(), au.lower())
-        if key in have:
+        if key in have or (barcode and barcode in barcodes):
             skipped += 1
             continue
         have.add(key)
+        if barcode:
+            barcodes.add(barcode)
         total = min(max(b.total, 1), 1000)
-        to_add.append((sid, ti, au, genre, total))
+        to_add.append((sid, ti, au, genre, total, description, cover_url, barcode))
     if not to_add:
         return {"added": 0, "skipped": skipped, "announced": True}
-    book_values = ",".join(["(?,?,?,?,?)"] * len(to_add))
+    book_values = ",".join(["(?,?,?,?,?,?,?,?)"] * len(to_add))
     inserted_books = rows(
-        "insert into books(school_id,title,author,genre,total) values " +
+        "insert into books(school_id,title,author,genre,total,description,cover_url,barcode) values " +
         book_values + " returning *",
         tuple(value for item in to_add for value in item))
     announced = await publish_imported_books(inserted_books)

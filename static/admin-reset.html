@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administrator — ma'lumotlarni o'chirish</title>
+  <style>
+    :root{font:16px/1.5 system-ui,sans-serif;color:#14231f;background:#e9eeea}
+    body{max-width:620px;margin:48px auto;padding:0 16px}
+    main{background:#fbfcfa;border:1px solid #cfd9d3;border-radius:12px;padding:24px}
+    h1{font-size:1.45rem}
+    .warning{padding:12px;border-left:4px solid #a32b2b;background:#fff2f0}
+    label{display:block;margin:16px 0 6px}
+    input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #9aa9a0;border-radius:6px;font:inherit}
+    button{margin-top:18px;padding:10px 14px;border:0;border-radius:6px;background:#a32b2b;color:white;font:inherit;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.6;cursor:wait}
+    #status{min-height:1.5em}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Barcha ma'lumotlarni o'chirish</h1>
+    <p class="warning">Bu amal PostgreSQL bazasidagi barcha kutubxonalar, akkauntlar, kitoblar, o'quvchilar va tarixni butunlay o'chiradi. Uni qaytarib bo'lmaydi. static/uploads ichidagi muqova fayllari qoladi. Avval ma'lumotlar bazasining zaxira nusxasini oling.</p>
+    <p>Bu sahifa faqat <code>ADMIN_RESET_KEY</code> maxfiy kaliti sozlangan bo'lsa ishlaydi. Kalitni hech kimga yubormang; sahifadan faqat HTTPS orqali foydalaning.</p>
+    <form id="reset-form">
+      <label for="admin-key">Administrator kaliti</label>
+      <input id="admin-key" type="password" autocomplete="off" required>
+      <label for="confirmation">Tasdiqlash uchun <code>DELETE ALL DATA</code> deb yozing</label>
+      <input id="confirmation" autocomplete="off" required>
+      <button id="reset-button" type="submit">Bazadagi hamma ma'lumotni o'chirish</button>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    const form = document.getElementById('reset-form');
+    const keyInput = document.getElementById('admin-key');
+    const confirmationInput = document.getElementById('confirmation');
+    const button = document.getElementById('reset-button');
+    const status = document.getElementById('status');
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (confirmationInput.value !== 'DELETE ALL DATA') {
+        status.textContent = 'Tasdiqlash iborasi aynan DELETE ALL DATA bo‘lishi kerak.';
+        return;
+      }
+      if (!window.confirm('Haqiqatan ham barcha kutubxonalar va akkauntlarni o‘chirmoqchimisiz?')) {
+        return;
+      }
+
+      button.disabled = true;
+      status.textContent = 'O‘chirish bajarilmoqda...';
+      try {
+        const response = await fetch('/api/admin/reset-database', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Key': keyInput.value
+          },
+          body: JSON.stringify({confirmation: confirmationInput.value})
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.detail || `So‘rov bajarilmadi (${response.status}).`);
+        }
+        status.textContent = 'Bazadagi barcha ma’lumotlar o‘chirildi.';
+        confirmationInput.value = '';
+      } catch (error) {
+        status.textContent = error.message || 'Xatolik yuz berdi.';
+      } finally {
+        keyInput.value = '';
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

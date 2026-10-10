@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise SystemExit("DATABASE_URL topilmadi. Neon/Supabase ulanish manzilini Environment Variables ga qo'shing.")
+ADMIN_RESET_KEY = os.getenv("ADMIN_RESET_KEY", "")
 
 pool = ConnectionPool(
     DATABASE_URL, min_size=1, max_size=5, open=True,
@@ -1353,6 +1354,9 @@ class Reg(BaseModel):
 class Login(BaseModel):
     login: str; parol: str
 
+class DatabaseReset(BaseModel):
+    confirmation: str
+
 class BookIn(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int = 1
     description: str = ""; cover_url: str = ""; barcode: str = ""
@@ -1407,6 +1411,35 @@ def upload_book_cover(d: CoverUpload, u=Depends(me)):
 @app.api_route("/", methods=["GET", "HEAD"])
 def index():
     return FileResponse("static/index.html")
+
+@app.api_route("/admin/reset", methods=["GET", "HEAD"])
+def admin_reset_page():
+    return FileResponse("static/admin-reset.html")
+
+@app.post("/api/admin/reset-database")
+def reset_database(
+    d: DatabaseReset,
+    admin_key: str = Header("", alias="X-Admin-Key"),
+):
+    if len(ADMIN_RESET_KEY) < 32:
+        raise HTTPException(503, "ADMIN_RESET_KEY sozlanmagan yoki 32 belgidan qisqa")
+    if not secrets.compare_digest(admin_key, ADMIN_RESET_KEY):
+        raise HTTPException(403, "Admin kaliti xato")
+    if d.confirmation != "DELETE ALL DATA":
+        raise HTTPException(400, "Tasdiqlash iborasi noto'g'ri")
+
+    tables = (
+        "telegram_notifications", "library_groups", "librarian_book_drafts",
+        "library_codes", "parent_codes", "parent_children", "res", "pupils",
+        "students", "books", "bot_users", "librarians", "schools",
+    )
+    with pool.connection() as conn:
+        with conn.transaction():
+            conn.execute(
+                "truncate table " + ", ".join(tables) + " restart identity"
+            )
+    log.warning("Barcha kutubxona ma'lumotlari administrator tomonidan o'chirildi")
+    return {"ok": True}
 
 @app.post("/api/register")
 def register(d: Reg):

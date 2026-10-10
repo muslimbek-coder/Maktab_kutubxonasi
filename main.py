@@ -7,7 +7,10 @@ from html import escape
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, FSInputFile,
+)
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
@@ -115,6 +118,10 @@ BOT_TEXT = {
         "role": "Siz kim bo'lasiz?", "student": "O'quvchi", "parent": "Ota-ona",
         "librarian": "Kutubxonachi", "student_menu": "O'quvchi bo'limi:",
         "parent_menu": "Ota-ona bo'limi:", "books_button": "📚 Kitob tanlash",
+        "student_menu_button": "🎓 O'quvchi menyusi",
+        "parent_menu_button": "👨‍👩‍👧 Ota-ona menyusi",
+        "librarian_menu_button": "📚 Kutubxonachi menyusi",
+        "quick_menu_hint": "Bo'limga qaytish uchun pastdagi tugmani bosing.",
         "student_profile_button": "👤 Ism va sinfni kiritish",
         "parent_reminder_button": "👨‍👩‍👧 Ota-onaga eslatma",
         "parent_reminder_enabled": "✅ Ota-onaga eslatmalar yoqilgan",
@@ -220,6 +227,10 @@ BOT_TEXT = {
         "student": "Ученик", "parent": "Родитель", "librarian": "Библиотекарь",
         "student_menu": "Раздел ученика:", "parent_menu": "Раздел родителя:",
         "books_button": "📚 Выбрать книгу",
+        "student_menu_button": "🎓 Меню ученика",
+        "parent_menu_button": "👨‍👩‍👧 Меню родителя",
+        "librarian_menu_button": "📚 Меню библиотекаря",
+        "quick_menu_hint": "Нажмите кнопку ниже, чтобы открыть раздел.",
         "student_profile_button": "👤 Ввести имя и класс",
         "parent_reminder_button": "👨‍👩‍👧 Напоминания родителю",
         "parent_reminder_enabled": "✅ Напоминания родителю включены",
@@ -315,6 +326,10 @@ BOT_TEXT = {
         "role": "Who are you?", "student": "Student", "parent": "Parent",
         "librarian": "Librarian", "student_menu": "Student menu:", "parent_menu": "Parent menu:",
         "books_button": "📚 Browse books",
+        "student_menu_button": "🎓 Student menu",
+        "parent_menu_button": "👨‍👩‍👧 Parent menu",
+        "librarian_menu_button": "📚 Librarian menu",
+        "quick_menu_hint": "Use the button below to reopen your section.",
         "student_profile_button": "👤 Enter name and class",
         "parent_reminder_button": "👨‍👩‍👧 Parent reminders",
         "parent_reminder_enabled": "✅ Parent reminders are on",
@@ -424,6 +439,13 @@ dp = Dispatcher()
 def kb(btns):
     return InlineKeyboardMarkup(inline_keyboard=btns)
 
+def persistent_menu_keyboard(tg_id, button_key):
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=text(tg_id, button_key))]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
 def actor_id(m: Message):
     return m.chat.id if m.chat.type == "private" else m.from_user.id
 
@@ -516,6 +538,9 @@ async def show_student_menu(m: Message):
             callback_data="student:parent-reminders")],
         [InlineKeyboardButton(text=text(tg_id, "parent_code_button"), callback_data="student:code")],
     ]))
+    await m.answer(
+        text(tg_id, "quick_menu_hint"),
+        reply_markup=persistent_menu_keyboard(tg_id, "student_menu_button"))
 
 async def show_student_results(m: Message, tg_id: int, offset: int = 0):
     st = one("select 1 from students where tg_id=? and role='student'", (tg_id,))
@@ -561,6 +586,9 @@ async def show_parent_menu(m: Message):
         [InlineKeyboardButton(text=text(tg_id, "parent_add"), callback_data="parent:add")],
         [InlineKeyboardButton(text=text(tg_id, "parent_list"), callback_data="parent:list")],
     ]))
+    await m.answer(
+        text(tg_id, "quick_menu_hint"),
+        reply_markup=persistent_menu_keyboard(tg_id, "parent_menu_button"))
 
 async def show_books(m: Message, school_id):
     tg_id = actor_id(m)
@@ -653,6 +681,9 @@ async def show_librarian_menu(m: Message):
     await m.answer(text(tg_id, "librarian_menu"), reply_markup=kb([
         [InlineKeyboardButton(text=text(tg_id, "add_book_button"), callback_data="librarian:addbook")],
     ]))
+    await m.answer(
+        text(tg_id, "quick_menu_hint"),
+        reply_markup=persistent_menu_keyboard(tg_id, "librarian_menu_button"))
 
 async def publish_book(book, group_ids=None):
     school = one("select name from schools where id=?", (book["school_id"],))
@@ -1108,6 +1139,23 @@ async def got_text(m: Message):
     if (m.chat.type == "private" and len(code) == 16
             and all(char in "0123456789ABCDEF" for char in code)):
         return await link_librarian_code(m, code)
+    if m.chat.type == "private":
+        menu_roles = {
+            text(m.from_user.id, "student_menu_button"): "student",
+            text(m.from_user.id, "parent_menu_button"): "parent",
+            text(m.from_user.id, "librarian_menu_button"): "librarian",
+        }
+        selected_role = menu_roles.get((m.text or "").strip())
+        if selected_role == "librarian" and one(
+                "select id from librarians where telegram_tg_id=?",
+                (m.from_user.id,)):
+            return await show_librarian_menu(m)
+        if selected_role in ("student", "parent"):
+            user = one("select role from students where tg_id=?", (m.from_user.id,))
+            if user and user["role"] == selected_role:
+                if selected_role == "student":
+                    return await show_student_menu(m)
+                return await show_parent_menu(m)
     draft = one("select * from librarian_book_drafts where tg_id=?", (m.from_user.id,))
     if draft and m.chat.type == "private":
         value = m.text.strip()

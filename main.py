@@ -1712,9 +1712,9 @@ def update_book(book_id: int, d: BookUpdate, u=Depends(me)):
         (u["school_id"], barcode, book_id))
     if duplicate:
         raise HTTPException(409, "Bu shtrix-kod boshqa kitobda ishlatilgan")
-        q("update books set title=?, author=?, genre=?, total=?, description=?, cover_url=?, "
-            "barcode=?, pdf_url=? where id=? and school_id=?",
-            (title, author, genre, d.total, description, cover_url, barcode, pdf_url,
+    q("update books set title=?, author=?, genre=?, total=?, description=?, cover_url=?, "
+      "barcode=?, pdf_url=? where id=? and school_id=?",
+      (title, author, genre, d.total, description, cover_url, barcode, pdf_url,
        book_id, u["school_id"]))
     return {"ok": True}
 
@@ -1865,7 +1865,7 @@ async def import_books(d: BooksIn, u=Depends(me)):
     for b in d.items[:5000]:
         if not b.title.strip():
             continue
-        ti, au, genre, description, cover_url, barcode = validate_book_fields(
+        ti, au, genre, description, cover_url, barcode, _ = validate_book_fields(
             b.title, b.author, b.genre, b.description, b.cover_url, b.barcode)
         key = (ti.lower(), au.lower())
         if key in have or (barcode and barcode in barcodes):

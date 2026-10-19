@@ -65,6 +65,9 @@ Object.assign(T.en,{reservedStatus:"Reserved",coverTooLarge:"Cover image must be
 Object.assign(T.uz,{pdfFile:"Kitob PDF fayli",pdfAdded:"Kitob qo'shildi · PDF mavjud",pdfMissing:"Kitob qo'shildi · PDF mavjud emas",pdfTooLarge:"PDF fayl 20 MB dan kichik bo'lishi kerak",badPdf:"Faqat to'g'ri PDF fayl tanlang"});
 Object.assign(T.ru,{pdfFile:"PDF-файл книги",pdfAdded:"Книга добавлена · PDF есть",pdfMissing:"Книга добавлена · PDF нет",pdfTooLarge:"PDF-файл должен быть меньше 20 МБ",badPdf:"Выберите корректный PDF-файл"});
 Object.assign(T.en,{pdfFile:"Book PDF file",pdfAdded:"Book added · PDF available",pdfMissing:"Book added · PDF not available",pdfTooLarge:"PDF must be smaller than 20 MB",badPdf:"Choose a valid PDF file"});
+Object.assign(T.uz,{addPdf:"PDF qo'shish",replacePdf:"PDF faylni almashtirish",pdfSaved:"PDF kitobga biriktirildi"});
+Object.assign(T.ru,{addPdf:"Добавить PDF",replacePdf:"Заменить PDF-файл",pdfSaved:"PDF прикреплён к книге"});
+Object.assign(T.en,{addPdf:"Add PDF",replacePdf:"Replace PDF file",pdfSaved:"PDF attached to the book"});
 Object.assign(T.uz,{reportReserved:"Band qilingan",reportBorrowed:"O'qiyapti",reportReturned:"Qaytarilgan",reportOverdue:"Muddati o'tgan",reportCancelled:"Bekor qilingan"});
 Object.assign(T.ru,{reportReserved:"Забронирована",reportBorrowed:"На руках",reportReturned:"Возвращена",reportOverdue:"Просрочена",reportCancelled:"Отменена"});
 Object.assign(T.en,{reportReserved:"Reserved",reportBorrowed:"Borrowed",reportReturned:"Returned",reportOverdue:"Overdue",reportCancelled:"Cancelled"});
@@ -197,8 +200,30 @@ function addPdfUploadFields(){
   cover.insertAdjacentElement('afterend',label);label.insertAdjacentElement('afterend',input);
  }
 }
+async function attachBookPdf(id,file){
+ if(!file)return;
+ try{
+  const book=D.books.find(item=>item.id===id),pdf_url=await uploadBookPdf(file);
+  await api(`books/${id}`,'PUT',{title:book.title,author:book.author,genre:book.genre,description:book.description,barcode:book.barcode,cover_url:book.cover_url,pdf_url,total:book.total});
+  await load();toast(t('pdfSaved'))
+ }catch(e){if(e instanceof Error)toast(e.message)}
+}
+function addPdfManageButtons(){
+ if(tab!=='manageBooks')return;
+ document.querySelectorAll('#view table tr').forEach(row=>{
+  const edit=row.querySelector('button[onclick^="startBookEdit("]');if(!edit||row.querySelector('.pdf-attach'))return;
+  const match=edit.getAttribute('onclick').match(/\d+/);if(!match)return;
+  const id=Number(match[0]),book=D.books.find(item=>item.id===id);if(!book)return;
+  const cell=edit.parentElement,input=document.createElement('input'),button=document.createElement('button');
+  input.type='file';input.accept='application/pdf,.pdf';input.hidden=true;
+  input.addEventListener('change',()=>{const file=input.files[0];input.value='';attachBookPdf(id,file)});
+  button.type='button';button.className='btn sm ghost pdf-attach';button.textContent='📄';
+  button.title=t(book.pdf_url?'replacePdf':'addPdf');button.setAttribute('aria-label',button.title);
+  button.addEventListener('click',()=>input.click());cell.append(input,button)
+ })
+}
 const renderWithPdfFields=render;
-render=function(){renderWithPdfFields();addPdfUploadFields()};
+render=function(){renderWithPdfFields();addPdfUploadFields();addPdfManageButtons()};
 function switchTab(next){stopBarcodeScan();tab=next;render()}
 const C=['#b8862f','#2f6f62','#7a2e3a','#c9b27a','#27456b','#8a5a2b','#4e7d4a','#a33f2f','#d8c9a0','#3a3a5c'];
 $('shelf').innerHTML=Array.from({length:26},(_,i)=>`<i class="${i===17?'lean':''}" style="width:${10+(i*7%9)}px;height:${34+(i*13%27)}px;background:${C[i*3%C.length]};animation-delay:${i*35}ms"></i>`).join('');

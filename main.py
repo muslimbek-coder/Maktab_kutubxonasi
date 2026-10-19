@@ -168,7 +168,7 @@ BOT_TEXT = {
         "book_added_no_delivery": "✅ “{title}” kitobi qo'shildi. PDF: {pdf_status}, ammo guruhga e'lon yetmadi. Bot guruhda yozish huquqiga ega ekanini tekshiring.",
         "pdf_yes": "mavjud",
         "pdf_no": "mavjud emas",
-        "pdf_reading": "📖 Kitob PDF'i. Mutolaa yoqimli bo'lsin!",
+        "pdf_reading": "📖 Kitob PDF'i. Mutolaa yoqimli bo'lsin! To'liq o'qish uchun kitobni olib keting",
         "book_title_error": "Kitob nomi 1–200 belgi bo'lishi kerak. Qayta yuboring:",
         "book_author_error": "Muallif nomi 100 belgidan oshmasin. Qayta yuboring:",
         "book_genre_error": "Janr 60 belgidan oshmasin. Qayta yuboring:",

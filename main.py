@@ -40,7 +40,7 @@ pool = ConnectionPool(
 SCHEMA = """
 create table if not exists schools(id serial primary key, vil text, tum text, name text, unique(vil,tum,name));
 create table if not exists librarians(id serial primary key, school_id int, name text, fam text, login text unique, pw text, token text, telegram_tg_id bigint);
-create table if not exists books(id serial primary key, school_id int, title text, author text, genre text not null default '', total int, description text not null default '', cover_url text not null default '', barcode text not null default '');
+create table if not exists books(id serial primary key, school_id int, title text, author text, genre text not null default '', total int, description text not null default '', cover_url text not null default '', barcode text not null default '', pdf_url text not null default '');
 create table if not exists students(tg_id bigint primary key, school_id int, name text, pending int, want int, role text, state text, requested_days int, cls text, notify_parents boolean not null default true);
 create table if not exists res(id serial primary key, school_id int, book_id int, tg_id bigint, name text, created bigint, until bigint, st text, days int, due bigint, cls text, reminder_pre_sent bigint, reminder_overdue_sent bigint, reminder_pre_parent_sent bigint, reminder_overdue_parent_sent bigint);
 create table if not exists pupils(id serial primary key, school_id int, name text, cls text, unique(school_id,name,cls));
@@ -49,7 +49,7 @@ create table if not exists parent_codes(code text primary key, student_tg bigint
 create table if not exists bot_users(tg_id bigint primary key, language text);
 create table if not exists library_codes(code text primary key, librarian_id int not null, purpose text not null, expires bigint not null);
 create table if not exists library_groups(school_id int not null, telegram_group_id bigint not null, telegram_group_title text, primary key(school_id, telegram_group_id));
-create table if not exists librarian_book_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, title text, author text, genre text, description text, cover_url text, barcode text);
+create table if not exists librarian_book_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, title text, author text, genre text, description text, cover_url text, barcode text, pdf_url text);
 create table if not exists telegram_notifications(id serial primary key, school_id int not null, recipient_tg bigint not null, message text not null, kind text not null, parse_mode text, button_text text, button_url text, status text not null default 'failed', attempts int not null default 1, last_error text not null default '', created bigint not null, updated bigint not null, sent_at bigint);
 create index if not exists telegram_notifications_school_status_idx on telegram_notifications(school_id, status, created desc);
 alter table librarians add column if not exists telegram_tg_id bigint;
@@ -60,6 +60,7 @@ alter table books add column if not exists genre text not null default '';
 alter table books add column if not exists description text not null default '';
 alter table books add column if not exists cover_url text not null default '';
 alter table books add column if not exists barcode text not null default '';
+alter table books add column if not exists pdf_url text not null default '';
 alter table res add column if not exists reminder_pre_sent bigint;
 alter table res add column if not exists reminder_overdue_sent bigint;
 alter table res add column if not exists reminder_pre_parent_sent bigint;
@@ -67,6 +68,7 @@ alter table res add column if not exists reminder_overdue_parent_sent bigint;
 alter table librarian_book_drafts add column if not exists description text;
 alter table librarian_book_drafts add column if not exists cover_url text;
 alter table librarian_book_drafts add column if not exists barcode text;
+alter table librarian_book_drafts add column if not exists pdf_url text;
 create unique index if not exists books_school_barcode_unique
 on books(school_id, barcode) where barcode <> '';
 insert into library_groups(school_id, telegram_group_id, telegram_group_title)
@@ -153,6 +155,7 @@ BOT_TEXT = {
         "book_description": "Kitob haqida qisqacha ma'lumot yuboring (bo'sh qoldirish uchun -):",
         "book_barcode": "Kitob shtrix-kodini/QR matnini yuboring (bo'lmasa -):",
         "book_cover": "Muqova rasmi URL manzilini yuboring (bo'lmasa -):",
+        "book_pdf": "Kitobning PDF faylini yuboring (bo'lmasa -):",
         "cover_link": "🖼 Muqovani ko'rish",
         "book_description_error": "Tavsif 1000 belgidan oshmasin. Qayta yuboring:",
         "book_barcode_error": "Kod 80 belgidan oshmasin. Qayta yuboring:",
@@ -160,9 +163,12 @@ BOT_TEXT = {
         "barcode_taken": "Bu shtrix-kod boshqa kitobda ishlatilgan.",
         "book_total": "Nechta nusxa bor? 1 dan 1000 gacha son kiriting:",
         "book_count_error": "Nusxalar sonini 1 dan 1000 gacha butun son bilan kiriting.",
-        "book_added": "✅ “{title}” kitobi qo'shildi. Ulangan guruhga e'lon yuborildi.",
-        "book_added_no_group": "✅ “{title}” kitobi qo'shildi. Guruh e'loni uchun avval guruhni saytdan ulang.",
-        "book_added_no_delivery": "✅ “{title}” kitobi qo'shildi, ammo guruhga e'lon yetmadi. Bot guruhda yozish huquqiga ega ekanini tekshiring.",
+        "book_added": "✅ “{title}” kitobi qo'shildi. PDF: {pdf_status}. Ulangan guruhga e'lon yuborildi.",
+        "book_added_no_group": "✅ “{title}” kitobi qo'shildi. PDF: {pdf_status}. Guruh e'loni uchun avval guruhni saytdan ulang.",
+        "book_added_no_delivery": "✅ “{title}” kitobi qo'shildi. PDF: {pdf_status}, ammo guruhga e'lon yetmadi. Bot guruhda yozish huquqiga ega ekanini tekshiring.",
+        "pdf_yes": "mavjud",
+        "pdf_no": "mavjud emas",
+        "pdf_reading": "📖 Kitob PDF'i. Mutolaa yoqimli bo'lsin!",
         "book_title_error": "Kitob nomi 1–200 belgi bo'lishi kerak. Qayta yuboring:",
         "book_author_error": "Muallif nomi 100 belgidan oshmasin. Qayta yuboring:",
         "book_genre_error": "Janr 60 belgidan oshmasin. Qayta yuboring:",
@@ -262,6 +268,7 @@ BOT_TEXT = {
         "book_description": "Кратко опишите книгу (или отправьте -):",
         "book_barcode": "Отправьте штрих-код/QR-код книги (или -):",
         "book_cover": "Отправьте URL обложки (или -):",
+        "book_pdf": "Отправьте PDF-файл книги (или -):",
         "cover_link": "🖼 Посмотреть обложку",
         "book_description_error": "Описание должно быть не длиннее 1000 символов. Повторите:",
         "book_barcode_error": "Код не должен быть длиннее 80 символов. Повторите:",
@@ -269,9 +276,12 @@ BOT_TEXT = {
         "barcode_taken": "Этот штрих-код уже используется другой книгой.",
         "book_total": "Сколько экземпляров? Введите число от 1 до 1000:",
         "book_count_error": "Введите целое число экземпляров от 1 до 1000.",
-        "book_added": "✅ Книга «{title}» добавлена. Объявление отправлено в подключённую группу.",
-        "book_added_no_group": "✅ Книга «{title}» добавлена. Сначала подключите группу на сайте, чтобы публиковать объявления.",
-        "book_added_no_delivery": "✅ Книга «{title}» добавлена, но объявление не доставлено. Проверьте право бота писать в группу.",
+        "book_added": "✅ Книга «{title}» добавлена. PDF: {pdf_status}. Объявление отправлено в подключённую группу.",
+        "book_added_no_group": "✅ Книга «{title}» добавлена. PDF: {pdf_status}. Сначала подключите группу на сайте.",
+        "book_added_no_delivery": "✅ Книга «{title}» добавлена. PDF: {pdf_status}, но объявление не доставлено. Проверьте право бота писать в группу.",
+        "pdf_yes": "есть",
+        "pdf_no": "нет",
+        "pdf_reading": "📖 PDF книги. Приятного чтения!",
         "book_title_error": "Название должно содержать от 1 до 200 символов. Повторите:",
         "book_author_error": "Имя автора должно быть не длиннее 100 символов. Повторите:",
         "book_genre_error": "Жанр должен быть не длиннее 60 символов. Повторите:",
@@ -361,6 +371,7 @@ BOT_TEXT = {
         "book_description": "Send a short description (or send -):",
         "book_barcode": "Send the book barcode/QR text (or -):",
         "book_cover": "Send the cover image URL (or -):",
+        "book_pdf": "Send the book PDF file (or -):",
         "cover_link": "🖼 View cover",
         "book_description_error": "The description must be no longer than 1000 characters. Try again:",
         "book_barcode_error": "The code must be no longer than 80 characters. Try again:",
@@ -368,9 +379,12 @@ BOT_TEXT = {
         "barcode_taken": "This barcode is already assigned to another book.",
         "book_total": "How many copies? Enter a number from 1 to 1000:",
         "book_count_error": "Enter a whole number of copies from 1 to 1000.",
-        "book_added": "✅ “{title}” was added. An announcement was sent to the connected group.",
-        "book_added_no_group": "✅ “{title}” was added. Connect a group on the website to publish announcements.",
-        "book_added_no_delivery": "✅ “{title}” was added, but the group announcement was not delivered. Check that the bot can post in the group.",
+        "book_added": "✅ “{title}” was added. PDF: {pdf_status}. An announcement was sent to the connected group.",
+        "book_added_no_group": "✅ “{title}” was added. PDF: {pdf_status}. Connect a group on the website to publish announcements.",
+        "book_added_no_delivery": "✅ “{title}” was added. PDF: {pdf_status}, but the group announcement was not delivered. Check that the bot can post in the group.",
+        "pdf_yes": "available",
+        "pdf_no": "not available",
+        "pdf_reading": "📖 Book PDF. Enjoy reading!",
         "book_title_error": "The title must be 1–200 characters. Try again:",
         "book_author_error": "The author must be no longer than 100 characters. Try again:",
         "book_genre_error": "The genre must be no longer than 60 characters. Try again:",
@@ -644,6 +658,14 @@ async def reserve(m: Message, tg, book_id, days, name, cls):
     q("update students set name=?, cls=?, state=null, want=null, requested_days=null where tg_id=?",
       (name, cls, tg))
     await m.answer(text(tg, "reserved", title=b["title"], until=fmt(now + HOLD), days=days))
+    if b.get("pdf_url"):
+        pdf_path = Path("static") / "uploads" / Path(b["pdf_url"]).name
+        if pdf_path.is_file():
+            try:
+                await m.answer_document(
+                    FSInputFile(str(pdf_path)), caption=text(tg, "pdf_reading"))
+            except Exception:
+                log.exception("Kitob PDF yuborilmadi (book_id=%s, tg_id=%s)", book_id, tg)
     parent_notices = {
         "uz": f"📚 Farzandingiz {name} ({cls}) “{b['title']}” kitobini band qildi.",
         "ru": f"📚 Ваш ребёнок {name} ({cls}) забронировал книгу «{b['title']}».",
@@ -714,16 +736,19 @@ async def publish_book(book, group_ids=None):
             "🇺🇿 O'zbekcha\n"
             f"📖 <b>{safe_title}</b>\n✍️ Muallif: {safe_author}\n"
             f"🎭 Janr: {safe_genre}\n📦 Mavjud: {available}/{book['total']} nusxa\n"
+            f"📄 PDF: {'mavjud' if book.get('pdf_url') else 'mavjud emas'}\n"
             f"{'📝 ' + safe_description + chr(10) if safe_description else ''}"
             f"🏫 {safe_school}\n\n"
             "📚 <b>НОВАЯ КНИГА В БИБЛИОТЕКЕ!</b>\n"
             f"📖 <b>{safe_title}</b>\n✍️ Автор: {safe_author}\n"
             f"🎭 Жанр: {safe_genre}\n📦 В наличии: {available}/{book['total']} экз.\n"
+            f"📄 PDF: {'есть' if book.get('pdf_url') else 'нет'}\n"
             f"{'📝 ' + safe_description + chr(10) if safe_description else ''}"
             f"🏫 {safe_school}\n\n"
             "📚 <b>NEW BOOK AT THE LIBRARY!</b>\n"
             f"📖 <b>{safe_title}</b>\n✍️ Author: {safe_author}\n"
             f"🎭 Genre: {safe_genre}\n📦 Available: {available}/{book['total']} copies\n"
+            f"📄 PDF: {'available' if book.get('pdf_url') else 'not available'}\n"
             f"{'📝 ' + safe_description + chr(10) if safe_description else ''}"
             f"🏫 {safe_school}\n\n"
             "📲 Bot orqali oldindan band qiling / Бронируйте в боте / Reserve in the bot"
@@ -856,7 +881,7 @@ async def begin_add_book(m: Message, tg_id: int | None = None):
         "values(?,?,?,'title') on conflict(tg_id) do update set "
         "librarian_id=excluded.librarian_id, school_id=excluded.school_id, "
         "current_step='title', title=null, author=null, genre=null, "
-        "description=null, cover_url=null, barcode=null",
+        "description=null, cover_url=null, barcode=null, pdf_url=null",
         (tg_id, librarian["id"], librarian["school_id"]))
     await m.answer(text(tg_id, "book_title"))
 
@@ -1134,6 +1159,36 @@ async def reserve_book_details(c: CallbackQuery):
         return await c.message.answer(text(c.from_user.id, "bad_book"))
     await ask_days(c.message, c.from_user.id, int(book_id))
 
+@dp.message(F.document)
+async def got_book_pdf(m: Message):
+    if m.chat.type != "private" or not m.document:
+        return
+    draft = one("select * from librarian_book_drafts where tg_id=?", (m.from_user.id,))
+    if not draft or draft["current_step"] != "pdf":
+        return
+    document = m.document
+    if (not (document.file_name or "").lower().endswith(".pdf")
+            or document.mime_type not in (None, "application/pdf")):
+        return await m.answer(text(m.from_user.id, "book_pdf"))
+    if document.file_size and document.file_size > 20_000_000:
+        return await m.answer(text(m.from_user.id, "book_pdf"))
+    directory = Path("static") / "uploads"
+    directory.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex}.pdf"
+    path = directory / name
+    try:
+        await m.bot.download(document, destination=path)
+        if path.stat().st_size > 20_000_000 or not path.read_bytes().startswith(b"%PDF-"):
+            path.unlink(missing_ok=True)
+            return await m.answer(text(m.from_user.id, "book_pdf"))
+    except Exception:
+        path.unlink(missing_ok=True)
+        log.exception("Kutubxonachi PDF fayli saqlanmadi (tg_id=%s)", m.from_user.id)
+        return await m.answer(text(m.from_user.id, "book_pdf"))
+    q("update librarian_book_drafts set pdf_url=?, current_step='total' where tg_id=?",
+      (f"/static/uploads/{name}", m.from_user.id))
+    await m.answer(text(m.from_user.id, "book_total"))
+
 @dp.message(F.text & ~F.text.startswith("/"))
 async def got_text(m: Message):
     code = (m.text or "").strip().upper()
@@ -1198,8 +1253,14 @@ async def got_text(m: Message):
             value = "" if value in ("-", "—") else value
             if value and not value.startswith(("https://", "http://")):
                 return await m.answer(text(m.from_user.id, "book_cover_error"))
-            q("update librarian_book_drafts set cover_url=?, current_step='total' where tg_id=?",
+            q("update librarian_book_drafts set cover_url=?, current_step='pdf' where tg_id=?",
               (value, m.from_user.id))
+            return await m.answer(text(m.from_user.id, "book_pdf"))
+        if draft["current_step"] == "pdf":
+            if value not in ("-", "—"):
+                return await m.answer(text(m.from_user.id, "book_pdf"))
+            q("update librarian_book_drafts set pdf_url='', current_step='total' where tg_id=?",
+              (m.from_user.id,))
             return await m.answer(text(m.from_user.id, "book_total"))
         if draft["current_step"] == "total":
             if not value.isdigit() or not 1 <= int(value) <= 1000:
@@ -1209,18 +1270,20 @@ async def got_text(m: Message):
                     (draft["school_id"], draft["barcode"])):
                 return await m.answer(text(m.from_user.id, "barcode_taken"))
             book = one(
-                "insert into books(school_id,title,author,genre,total,description,cover_url,barcode) "
-                "values(?,?,?,?,?,?,?,?) returning *",
+                "insert into books(school_id,title,author,genre,total,description,cover_url,barcode,pdf_url) "
+                "values(?,?,?,?,?,?,?,?,?) returning *",
                 (draft["school_id"], draft["title"], draft["author"] or "",
                  draft["genre"] or "", int(value), draft["description"] or "",
-                 draft["cover_url"] or "", draft["barcode"] or ""))
+                 draft["cover_url"] or "", draft["barcode"] or "", draft["pdf_url"] or ""))
             q("delete from librarian_book_drafts where tg_id=?", (m.from_user.id,))
             published = await publish_book(book)
             school = one("select 1 from library_groups where school_id=? limit 1",
                          (draft["school_id"],))
             announce_key = "book_added" if published else (
                 "book_added_no_group" if not school else "book_added_no_delivery")
-            await m.answer(text(m.from_user.id, announce_key, title=book["title"]))
+            await m.answer(text(
+                m.from_user.id, announce_key, title=book["title"],
+                pdf_status=text(m.from_user.id, "pdf_yes" if book["pdf_url"] else "pdf_no")))
             return await show_librarian_menu(m)
     st = one("select * from students where tg_id=?", (m.from_user.id,))
     if not st:
@@ -1359,13 +1422,16 @@ class DatabaseReset(BaseModel):
 
 class BookIn(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int = 1
-    description: str = ""; cover_url: str = ""; barcode: str = ""
+    description: str = ""; cover_url: str = ""; barcode: str = ""; pdf_url: str = ""
 
 class BookUpdate(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int
-    description: str = ""; cover_url: str = ""; barcode: str = ""
+    description: str = ""; cover_url: str = ""; barcode: str = ""; pdf_url: str = ""
 
 class CoverUpload(BaseModel):
+    data_url: str
+
+class PdfUpload(BaseModel):
     data_url: str
 
 def store_cover(data_url: str) -> str:
@@ -1393,6 +1459,22 @@ def store_cover(data_url: str) -> str:
     (directory / name).write_bytes(image)
     return f"/static/uploads/{name}"
 
+def store_pdf(data_url: str) -> str:
+    try:
+        header, encoded = data_url.split(",", 1)
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(400, "PDF fayli noto'g'ri") from exc
+    if len(content) > 20_000_000:
+        raise HTTPException(413, "PDF fayl 20 MB dan kichik bo'lishi kerak")
+    if header.lower() != "data:application/pdf;base64" or not content.startswith(b"%PDF-"):
+        raise HTTPException(400, "Faqat to'g'ri PDF fayl qabul qilinadi")
+    name = f"{uuid.uuid4().hex}.pdf"
+    directory = Path("static") / "uploads"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_bytes(content)
+    return f"/static/uploads/{name}"
+
 class Lend(BaseModel):
     name: str; cls: str = ""; book_id: int; days: int = 14
 
@@ -1407,6 +1489,12 @@ def upload_book_cover(d: CoverUpload, u=Depends(me)):
     if len(d.data_url) > 3_400_000:
         raise HTTPException(413, "Muqova rasmi 2.5 MB dan kichik bo'lishi kerak")
     return {"cover_url": store_cover(d.data_url)}
+
+@app.post("/api/book-pdfs")
+def upload_book_pdf(d: PdfUpload, u=Depends(me)):
+    if len(d.data_url) > 27_000_000:
+        raise HTTPException(413, "PDF fayl 20 MB dan kichik bo'lishi kerak")
+    return {"pdf_url": store_pdf(d.data_url)}
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def index():
@@ -1587,9 +1675,9 @@ def get_dashboard(u=Depends(me)):
     }
 
 def validate_book_fields(title: str, author: str, genre: str, description: str,
-                         cover_url: str, barcode: str) -> tuple[str, str, str, str, str, str]:
+                         cover_url: str, barcode: str, pdf_url: str = "") -> tuple[str, str, str, str, str, str, str]:
     values = (title.strip(), author.strip(), genre.strip(), description.strip(),
-              cover_url.strip(), barcode.strip())
+              cover_url.strip(), barcode.strip(), pdf_url.strip())
     if not values[0]:
         raise HTTPException(400, "Kitob nomini yozing")
     if len(values[0]) > 200 or len(values[1]) > 100 or len(values[2]) > 60:
@@ -1598,12 +1686,14 @@ def validate_book_fields(title: str, author: str, genre: str, description: str,
         raise HTTPException(400, "Tavsif 1000, shtrix-kod 80 belgidan oshmasin")
     if values[4] and not values[4].startswith(("https://", "http://", "/static/uploads/")):
         raise HTTPException(400, "Muqova havolasi http:// yoki https:// bilan boshlanishi kerak")
+    if values[6] and not values[6].startswith("/static/uploads/"):
+        raise HTTPException(400, "PDF fayl noto'g'ri")
     return values
 
 @app.put("/api/books/{book_id}")
 def update_book(book_id: int, d: BookUpdate, u=Depends(me)):
-    title, author, genre, description, cover_url, barcode = validate_book_fields(
-        d.title, d.author, d.genre, d.description, d.cover_url, d.barcode)
+    title, author, genre, description, cover_url, barcode, pdf_url = validate_book_fields(
+        d.title, d.author, d.genre, d.description, d.cover_url, d.barcode, d.pdf_url)
     if not 1 <= d.total <= 1000:
         raise HTTPException(400, "Nusxalar soni 1 dan 1000 gacha bo'lishi kerak")
     book = one("select id from books where id=? and school_id=?",
@@ -1622,9 +1712,9 @@ def update_book(book_id: int, d: BookUpdate, u=Depends(me)):
         (u["school_id"], barcode, book_id))
     if duplicate:
         raise HTTPException(409, "Bu shtrix-kod boshqa kitobda ishlatilgan")
-    q("update books set title=?, author=?, genre=?, total=?, description=?, cover_url=?, "
-      "barcode=? where id=? and school_id=?",
-      (title, author, genre, d.total, description, cover_url, barcode,
+        q("update books set title=?, author=?, genre=?, total=?, description=?, cover_url=?, "
+            "barcode=?, pdf_url=? where id=? and school_id=?",
+            (title, author, genre, d.total, description, cover_url, barcode, pdf_url,
        book_id, u["school_id"]))
     return {"ok": True}
 
@@ -1642,17 +1732,17 @@ def delete_book(book_id: int, u=Depends(me)):
 
 @app.post("/api/books")
 async def add_book(d: BookIn, u=Depends(me)):
-    title, author, genre, description, cover_url, barcode = validate_book_fields(
-        d.title, d.author, d.genre, d.description, d.cover_url, d.barcode)
+    title, author, genre, description, cover_url, barcode, pdf_url = validate_book_fields(
+        d.title, d.author, d.genre, d.description, d.cover_url, d.barcode, d.pdf_url)
     if not 1 <= d.total <= 1000:
         raise HTTPException(400, "Nusxalar soni 1 dan 1000 gacha bo'lishi kerak")
     if barcode and one("select id from books where school_id=? and barcode=?",
                        (u["school_id"], barcode)):
         raise HTTPException(409, "Bu shtrix-kod boshqa kitobda ishlatilgan")
     book = one(
-        "insert into books(school_id,title,author,genre,total,description,cover_url,barcode) "
-        "values(?,?,?,?,?,?,?,?) returning *",
-        (u["school_id"], title, author, genre, d.total, description, cover_url, barcode))
+        "insert into books(school_id,title,author,genre,total,description,cover_url,barcode,pdf_url) "
+        "values(?,?,?,?,?,?,?,?,?) returning *",
+        (u["school_id"], title, author, genre, d.total, description, cover_url, barcode, pdf_url))
     announced = await publish_book(book)
     return {"ok": True, "announced": announced}
 

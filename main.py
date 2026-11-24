@@ -1738,50 +1738,80 @@ async def expirer():
                     x["tg_id"],
                     text(x["tg_id"], "expired_notice", title=x["title"]),
                     school_id=x["school_id"])
-        for x in rows(
+        upcoming = rows(
             "select r.id, r.school_id, r.tg_id, r.due, r.reminder_pre_sent, "
-            "r.reminder_overdue_sent, r.reminder_pre_parent_sent, "
-            "r.reminder_overdue_parent_sent, b.title, s.notify_parents "
+            "r.reminder_pre_parent_sent, b.title, s.notify_parents "
             "from res r join books b on b.id=r.book_id "
             "left join students s on s.tg_id=r.tg_id "
-            "where r.st='olindi' and r.tg_id<>0 and r.due is not null "
-            "and ((r.due>? and r.due<=? and "
-            "(r.reminder_pre_sent is null or "
+            "where r.st='olindi' and r.tg_id<>0 and r.due>? and r.due<=? "
+            "and (r.reminder_pre_sent is null or "
             "(s.notify_parents is not false and exists "
             "(select 1 from parent_children pc where pc.student_tg=r.tg_id) "
-            "and r.reminder_pre_parent_sent is null))) "
-            "or (r.due<=? and (r.reminder_overdue_sent is null "
-            "or r.reminder_overdue_sent<=? or "
-            "(s.notify_parents is not false and "
-            "exists (select 1 from parent_children pc where pc.student_tg=r.tg_id) and "
-            "(r.reminder_overdue_parent_sent is null or "
-            "r.reminder_overdue_parent_sent<=?)))))",
-            (now, now + 86400, now, now - 86400, now - 86400)):
-            overdue = x["due"] <= now
-            key = "overdue_reminder" if overdue else "due_reminder"
-            messages = {
-                language: BOT_TEXT[language][key].format(
-                    title=x["title"], due=fmt(x["due"]))
-                for language in BOT_TEXT
-            }
-            column = "reminder_overdue_sent" if overdue else "reminder_pre_sent"
-            if x[column] is None or (overdue and x[column] <= now - 86400):
-                await notify(
-                    x["tg_id"], messages[user_language(x["tg_id"])],
-                    school_id=x["school_id"])
-                q(f"update res set {column}=? where id=? and st='olindi'",
+            "and r.reminder_pre_parent_sent is null))",
+            (now, now + 86400))
+        for x in upcoming:
+            message = text(
+                x["tg_id"], "due_reminder", title=x["title"], due=fmt(x["due"]))
+            if x["reminder_pre_sent"] is None:
+                await notify(x["tg_id"], message, school_id=x["school_id"])
+                q("update res set reminder_pre_sent=? where id=? and st='olindi'",
                   (now, x["id"]))
-            if x["notify_parents"] is not False:
-                parent_column = (
-                    "reminder_overdue_parent_sent" if overdue
-                    else "reminder_pre_parent_sent")
-                if (x[parent_column] is None
-                        or (overdue and x[parent_column] <= now - 86400)):
-                    await notify_parents(
-                        x["tg_id"], messages, school_id=x["school_id"])
-                    q(f"update res set {parent_column}=? where id=? and st='olindi'",
-                      (now, x["id"]))
-        await asyncio.sleep(300)
+            if (x["notify_parents"] is not False
+                    and x["reminder_pre_parent_sent"] is None):
+                await notify_parents(
+                    x["tg_id"],
+                    {
+                        language: BOT_TEXT[language]["due_reminder"].format(
+                            title=x["title"], due=fmt(x["due"]))
+                        for language in BOT_TEXT
+                    },
+                    school_id=x["school_id"])
+                q(
+                    "update res set reminder_pre_parent_sent=? "
+                    "where id=? and st='olindi'",
+                    (now, x["id"]))
+
+        local_now = datetime.fromtimestamp(now, TZ)
+        today_seven = int(local_now.replace(
+            hour=7, minute=0, second=0, microsecond=0).timestamp())
+        if now >= today_seven:
+            overdue = rows(
+                "select r.id, r.school_id, r.tg_id, r.due, "
+                "r.reminder_overdue_sent, r.reminder_overdue_parent_sent, "
+                "b.title, s.notify_parents from res r "
+                "join books b on b.id=r.book_id "
+                "left join students s on s.tg_id=r.tg_id "
+                "where r.st='olindi' and r.tg_id<>0 and r.due<=? and "
+                "(r.reminder_overdue_sent is null or r.reminder_overdue_sent<? "
+                "or (s.notify_parents is not false and exists "
+                "(select 1 from parent_children pc where pc.student_tg=r.tg_id) "
+                "and (r.reminder_overdue_parent_sent is null "
+                "or r.reminder_overdue_parent_sent<?)))",
+                (today_seven, today_seven, today_seven))
+            for x in overdue:
+                messages = {
+                    language: BOT_TEXT[language]["overdue_reminder"].format(
+                        title=x["title"])
+                    for language in BOT_TEXT
+                }
+                if (x["reminder_overdue_sent"] is None
+                        or x["reminder_overdue_sent"] < today_seven):
+                    await notify(
+                        x["tg_id"], messages[user_language(x["tg_id"])],
+                        school_id=x["school_id"])
+                    q(
+                        "update res set reminder_overdue_sent=? "
+                        "where id=? and st='olindi'",
+                        (now, x["id"]))
+                if (x["notify_parents"] is not False
+                        and (x["reminder_overdue_parent_sent"] is None
+                             or x["reminder_overdue_parent_sent"] < today_seven)):
+                    await notify_parents(x["tg_id"], messages, school_id=x["school_id"])
+                    q(
+                        "update res set reminder_overdue_parent_sent=? "
+                        "where id=? and st='olindi'",
+                        (now, x["id"]))
+        await asyncio.sleep(max(1, 60 - int(time.time()) % 60))
 
 # ---------- Veb sayt API ----------
 @asynccontextmanager
@@ -2289,6 +2319,13 @@ async def do_action(rid: int, action: str, u=Depends(me)):
     r = one("select r.*, b.title from res r join books b on b.id=r.book_id where r.id=? and r.school_id=?", (rid, u["school_id"]))
     if not new or not r:
         raise HTTPException(404, "Topilmadi")
+    returnable_overdue = r["st"] == "muddati" and r.get("due") is not None
+    if new == "qaytarildi":
+        valid_status = r["st"] == "olindi" or returnable_overdue
+    else:
+        valid_status = r["st"] == "band"
+    if not valid_status:
+        raise HTTPException(409, "Kitobning holati o'zgargan. Ro'yxatni yangilang.")
     due = int(time.time()) + (r.get("days") or 14) * 86400
     q("update res set st=?, due=? where id=?", (new, due if new == "olindi" else r.get("due"), rid))
     notice_key = {
@@ -2301,8 +2338,11 @@ async def do_action(rid: int, action: str, u=Depends(me)):
         for language in BOT_TEXT
     }
     msg = localized_notices[user_language(r["tg_id"])]
+    telegram_status = "unlinked"
     if r["tg_id"]:
-        await notify(r["tg_id"], msg, school_id=r["school_id"])
+        telegram_status = (
+            "sent" if await notify(
+                r["tg_id"], msg, school_id=r["school_id"]) else "failed")
         await notify_parents(
             r["tg_id"],
             {
@@ -2310,7 +2350,7 @@ async def do_action(rid: int, action: str, u=Depends(me)):
                 for language in BOT_TEXT
             },
             school_id=r["school_id"])
-    return {"ok": True}
+    return {"ok": True, "telegram": telegram_status}
 
 @app.post("/api/lend")
 async def lend(d: Lend, u=Depends(me)):

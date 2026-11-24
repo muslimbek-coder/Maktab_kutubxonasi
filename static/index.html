@@ -283,6 +283,6 @@ function switchTab(next){stopBarcodeScan();tab=next;render()}
 const C=['#b8862f','#2f6f62','#7a2e3a','#c9b27a','#27456b','#8a5a2b','#4e7d4a','#a33f2f','#d8c9a0','#3a3a5c'];
 $('shelf').innerHTML=Array.from({length:26},(_,i)=>`<i class="${i===17?'lean':''}" style="width:${10+(i*7%9)}px;height:${34+(i*13%27)}px;background:${C[i*3%C.length]};animation-delay:${i*35}ms"></i>`).join('');
 setInterval(()=>{if(me&&['dashboard','res','telegram'].includes(tab)&&!document.querySelector('tr.go'))load()},15000);
-window.addEventListener('focus',()=>{if(me)load()});
+window.addEventListener('focus',()=>{if(me&&['dashboard','res','telegram'].includes(tab))load()});
 tok?load():render();
 </script></body></html>

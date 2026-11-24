@@ -790,12 +790,13 @@ def create_news_announcement(
                 (school_id, librarian_id, message, photo_path, scheduled_at,
                  status, now, now),
             ).fetchone()
-            conn.executemany(
-                _sql(
-                    "insert into news_announcement_groups(announcement_id,group_id) "
-                    "values(?,?)"),
-                [(announcement["id"], group_id) for group_id in sorted(targets)],
-            )
+            for group_id in sorted(targets):
+                conn.execute(
+                    _sql(
+                        "insert into news_announcement_groups(announcement_id,group_id) "
+                        "values(?,?)"),
+                    (announcement["id"], group_id),
+                )
     return announcement["id"], len(targets)
 
 async def deliver_news_announcement(announcement_id):

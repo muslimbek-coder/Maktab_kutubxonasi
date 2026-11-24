@@ -12,7 +12,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, FSInputFile,
 )
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi import FastAPI, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -50,8 +50,15 @@ create table if not exists bot_users(tg_id bigint primary key, language text);
 create table if not exists library_codes(code text primary key, librarian_id int not null, purpose text not null, expires bigint not null);
 create table if not exists library_groups(school_id int not null, telegram_group_id bigint not null, telegram_group_title text, primary key(school_id, telegram_group_id));
 create table if not exists librarian_book_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, title text, author text, genre text, description text, cover_url text, barcode text, pdf_url text);
+create table if not exists librarian_news_drafts(tg_id bigint primary key, librarian_id int not null, school_id int not null, current_step text not null, message text, image_path text);
+create table if not exists news_announcements(id serial primary key, school_id int not null, librarian_id int not null, message text not null, photo_path text, scheduled_at bigint, status text not null default 'queued', created bigint not null, updated bigint not null, sent_at bigint);
+create table if not exists news_announcement_groups(announcement_id int not null, group_id bigint not null, status text not null default 'pending', primary key(announcement_id,group_id));
 create table if not exists telegram_notifications(id serial primary key, school_id int not null, recipient_tg bigint not null, message text not null, kind text not null, parse_mode text, button_text text, button_url text, status text not null default 'failed', attempts int not null default 1, last_error text not null default '', created bigint not null, updated bigint not null, sent_at bigint);
 create index if not exists telegram_notifications_school_status_idx on telegram_notifications(school_id, status, created desc);
+alter table telegram_notifications add column if not exists photo_path text;
+alter table telegram_notifications add column if not exists news_announcement_id int;
+alter table librarian_news_drafts add column if not exists image_path text;
+create index if not exists news_announcements_due_idx on news_announcements(status, scheduled_at);
 alter table librarians add column if not exists telegram_tg_id bigint;
 alter table students add column if not exists notify_parents boolean not null default true;
 alter table schools add column if not exists telegram_group_id bigint;
@@ -139,13 +146,13 @@ BOT_TEXT = {
         "not_started": "Avval /start buyrug'ini bosing.", "no_libraries": "Kutubxonachi hisobiga kiring: /librarian KOD",
         "use_private": "Bu buyruqni bot bilan shaxsiy chatda yuboring.",
         "code": "Kod xato, eskirgan yoki avval ishlatilgan. Saytdan yangi kod yarating.",
-        "linked": "✅ Kutubxonachi hisobi ulandi. Kitob qo'shish uchun /addbook buyrug'ini yuboring.",
+        "linked": "✅ Kutubxonachi hisobi ulandi. Kitob qo'shish uchun /addbook, yangilik e'lon qilish uchun /news yuboring.",
         "already_linked": "Bu Telegram hisobi boshqa kutubxonachiga ulangan.",
         "need_link": "Avval sayt akkauntingizdan bir martalik kod olib, botga /librarian KOD yuboring.",
         "link_help": "Guruhga ulash uchun saytdagi “Telegram guruhini ulash” havolasini oching, botni guruhga qo'shib admin qiling (xabar yuborish huquqi bilan). So'ng havolani oching yoki guruhda /linklibrary KOD yuboring.",
         "group_only": "Bu buyruqni kutubxona guruhida yuboring.",
         "admin_only": "Guruhni ulash uchun guruh administratori bo'lishingiz kerak.",
-        "group_linked": "✅ Guruh kutubxonaga ulandi. Yangi kitoblar shu guruhga e'lon qilinadi.",
+        "group_linked": "✅ Guruh kutubxonaga ulandi. Kitoblar va yangiliklar shu guruhga e'lon qilinadi.",
         "group_linked_books": "✅ Guruh kutubxonaga ulandi. Avvalgi kitoblar e'loni: {sent}/{total} ta yuborildi.",
         "group_linked_books_failed": "✅ Guruh kutubxonaga ulandi. Avvalgi kitoblar e'loni: {sent}/{total} ta yuborildi, {failed} tasi yetkazilmadi. Yetkazilmaganlarni saytdagi Telegram bo'limidan qayta yuboring.",
         "group_code": "Guruh kodi xato yoki muddati o'tgan. Saytdan yangisini yarating.",
@@ -252,13 +259,13 @@ BOT_TEXT = {
         "not_started": "Сначала отправьте /start.", "no_libraries": "Войдите как библиотекарь: /librarian КОД",
         "use_private": "Отправьте эту команду в личном чате с ботом.",
         "code": "Код неверен, просрочен или уже использован. Создайте новый на сайте.",
-        "linked": "✅ Аккаунт библиотекаря подключён. Чтобы добавить книгу, отправьте /addbook.",
+        "linked": "✅ Аккаунт библиотекаря подключён. Книга: /addbook, новость: /news.",
         "already_linked": "Этот Telegram-аккаунт уже подключён к другому библиотекарю.",
         "need_link": "Сначала создайте одноразовый код в своём аккаунте на сайте и отправьте /librarian КОД.",
         "link_help": "Откройте ссылку «Подключить Telegram-группу» на сайте, добавьте бота в группу администратором с правом отправки сообщений, затем откройте ссылку. Или отправьте в группе /linklibrary КОД.",
         "group_only": "Отправьте эту команду в библиотечной группе.",
         "admin_only": "Для подключения группы нужно быть её администратором.",
-        "group_linked": "✅ Группа подключена к библиотеке. Новые книги будут опубликованы здесь.",
+        "group_linked": "✅ Группа подключена к библиотеке. Книги и новости будут публиковаться здесь.",
         "group_linked_books": "✅ Группа подключена. Объявления о существующих книгах отправлены: {sent}/{total}.",
         "group_linked_books_failed": "✅ Группа подключена. Объявления о существующих книгах отправлены: {sent}/{total}; не доставлено: {failed}. Повторите отправку в разделе Telegram на сайте.",
         "group_code": "Код группы неверен или просрочен. Создайте новый на сайте.",
@@ -356,13 +363,13 @@ BOT_TEXT = {
         "not_started": "Please send /start first.", "no_libraries": "Sign in as a librarian: /librarian CODE",
         "use_private": "Send this command in your private chat with the bot.",
         "code": "The code is invalid, expired, or already used. Generate a new one on the website.",
-        "linked": "✅ Librarian account linked. Send /addbook to add a book.",
+        "linked": "✅ Librarian account linked. Send /addbook for a book or /news for an announcement.",
         "already_linked": "This Telegram account is linked to another librarian.",
         "need_link": "Generate a one-time code in your website account, then send /librarian CODE.",
         "link_help": "Open the “Connect Telegram group” link on the website, add the bot as an administrator with permission to post, then open the link. Or send /linklibrary CODE in the group.",
         "group_only": "Send this command in the library group.",
         "admin_only": "You must be a group administrator to connect it.",
-        "group_linked": "✅ Group connected to the library. New books will be announced here.",
+        "group_linked": "✅ Group connected to the library. Books and news will be announced here.",
         "group_linked_books": "✅ Group connected. Announcements for existing books sent: {sent}/{total}.",
         "group_linked_books_failed": "✅ Group connected. Announcements for existing books sent: {sent}/{total}; {failed} could not be delivered. Retry failed announcements in the Telegram tab on the website.",
         "group_code": "The group code is invalid or expired. Generate a new one on the website.",
@@ -440,6 +447,61 @@ BOT_TEXT = {
     },
 }
 
+BOT_TEXT["uz"].update({
+    "add_news_button": "📢 Yangilik e'lon qilish",
+    "news_command": "Yangilik matnini yuboring (4096 belgigacha):",
+    "news_photo": "Rasm yuboring yoki rasmsiz e'lon qilish uchun - yuboring:",
+    "news_message_error": "Yangilik matni bo'sh bo'lmasin va rasm bilan 1024, rasmsiz 4096 belgidan oshmasin. Qayta yuboring:",
+    "news_photo_error": "Rasmni yuklab bo'lmadi. Qayta yuboring yoki rasmsiz davom etish uchun - yuboring:",
+    "news_preview": "👀 E'lon ko'rinishi:",
+    "news_publish": "✅ E'lon qilish",
+    "news_cancel": "Bekor qilish",
+    "news_preview_pending": "E'lonni yuborish yoki bekor qilish uchun quyidagi tugmalardan foydalaning.",
+    "news_no_groups": "E'lon yuborilmadi: avval guruhni sayt orqali ulang.",
+    "news_sent": "✅ Yangilik {sent}/{total} ta ulangan guruhga yuborildi.",
+    "news_partial": "⚠️ Yangilik {sent}/{total} ta guruhga yuborildi. Qolganlarini saytdagi Telegram bo'limidan qayta yuboring.",
+    "draft_active": "Avval joriy kiritishni tugating yoki /cancel buyrug'i bilan bekor qiling.",
+    "draft_cancelled": "Kiritish bekor qilindi.",
+    "book_cover": "Kitob muqovasini rasm qilib yuboring, URL kiriting yoki bo'lmasa - yuboring:",
+    "book_cover_error": "Muqova rasmini yuklab bo'lmadi. Qayta yuboring yoki - yuboring:",
+})
+BOT_TEXT["ru"].update({
+    "add_news_button": "📢 Опубликовать новость",
+    "news_command": "Отправьте текст новости (до 4096 символов):",
+    "news_photo": "Отправьте изображение или - чтобы опубликовать без него:",
+    "news_message_error": "Текст не должен быть пустым и длиннее 1024 символов с фото или 4096 без фото. Повторите:",
+    "news_photo_error": "Не удалось загрузить изображение. Повторите или отправьте - без фото:",
+    "news_preview": "👀 Предварительный просмотр:",
+    "news_publish": "✅ Опубликовать",
+    "news_cancel": "Отмена",
+    "news_preview_pending": "Используйте кнопки ниже, чтобы опубликовать или отменить объявление.",
+    "news_no_groups": "Новость не отправлена: сначала подключите группу на сайте.",
+    "news_sent": "✅ Новость отправлена в группы: {sent}/{total}.",
+    "news_partial": "⚠️ Новость отправлена в группы: {sent}/{total}. Остальные можно повторить в разделе Telegram на сайте.",
+    "draft_cancelled": "Ввод отменён.",
+    "draft_active": "Сначала завершите текущий ввод или отмените его командой /cancel.",
+    "book_cover": "Отправьте изображение обложки, URL или - если её нет:",
+    "book_cover_error": "Не удалось загрузить обложку. Повторите или отправьте -:",
+})
+BOT_TEXT["en"].update({
+    "add_news_button": "📢 Publish a news post",
+    "news_command": "Send the news text (up to 4096 characters):",
+    "news_photo": "Send an image, or send - to publish without one:",
+    "news_message_error": "Text must not be empty or exceed 1024 characters with an image, or 4096 without one. Try again:",
+    "news_photo_error": "Could not download the image. Try again or send - to continue without one:",
+    "news_preview": "👀 Announcement preview:",
+    "news_publish": "✅ Publish",
+    "news_cancel": "Cancel",
+    "news_preview_pending": "Use the buttons below to publish or cancel the announcement.",
+    "news_no_groups": "News was not sent: connect a group on the website first.",
+    "news_sent": "✅ News sent to {sent}/{total} connected groups.",
+    "news_partial": "⚠️ News sent to {sent}/{total} groups. Retry the rest in the website's Telegram section.",
+    "draft_cancelled": "Entry cancelled.",
+    "draft_active": "Finish the current entry first, or cancel it with /cancel.",
+    "book_cover": "Send a cover image, a URL, or - if there is no cover:",
+    "book_cover_error": "Could not download the cover. Try again or send -:",
+})
+
 def user_language(tg_id):
     u = one("select language from bot_users where tg_id=?", (tg_id,))
     return u["language"] if u and u["language"] in BOT_TEXT else "uz"
@@ -480,7 +542,8 @@ async def notify(tg, text, school_id=None):
     return await send_tracked_notification(school_id, tg, text, "direct")
 
 async def deliver_telegram_message(
-        recipient_tg, message, parse_mode=None, button_text=None, button_url=None):
+        recipient_tg, message, parse_mode=None, button_text=None, button_url=None,
+        photo_path=None):
     if not bot:
         raise RuntimeError("Telegram bot sozlanmagan")
     markup = None
@@ -488,23 +551,30 @@ async def deliver_telegram_message(
         markup = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text=button_text, url=button_url)
         ]])
-    await bot.send_message(
-        recipient_tg, message, parse_mode=parse_mode, reply_markup=markup)
+    if photo_path:
+        await bot.send_photo(
+            recipient_tg, FSInputFile(photo_path), caption=message,
+            parse_mode=parse_mode, reply_markup=markup)
+    else:
+        await bot.send_message(
+            recipient_tg, message, parse_mode=parse_mode, reply_markup=markup)
 
 async def send_tracked_notification(
         school_id, recipient_tg, message, kind, parse_mode=None,
-        button_text=None, button_url=None):
+        button_text=None, button_url=None, photo_path=None,
+        news_announcement_id=None):
     now = int(time.time())
     try:
         await deliver_telegram_message(
-            recipient_tg, message, parse_mode, button_text, button_url)
+            recipient_tg, message, parse_mode, button_text, button_url, photo_path)
     except Exception as e:
         q(
             "insert into telegram_notifications(school_id,recipient_tg,message,kind,"
-            "parse_mode,button_text,button_url,status,attempts,last_error,created,updated) "
-            "values(?,?,?,?,?,?,?,'failed',1,?,?,?)",
+            "parse_mode,button_text,button_url,photo_path,news_announcement_id,"
+            "status,attempts,last_error,created,updated) "
+            "values(?,?,?,?,?,?,?,?,?,'failed',1,?,?,?)",
             (school_id, recipient_tg, message, kind, parse_mode, button_text,
-             button_url, str(e)[:1000], now, now))
+             button_url, photo_path, news_announcement_id, str(e)[:1000], now, now))
         log.warning("Telegram xabari yuborilmadi (tg_id=%s): %s", recipient_tg, e)
         return False
     return True
@@ -699,10 +769,115 @@ async def notify_parents(student_tg, content, school_id=None):
             school_id, parent_id, message, "parent") or delivered
     return delivered
 
+def create_news_announcement(
+        school_id, librarian_id, message, photo_path, group_ids, scheduled_at):
+    linked_groups = rows(
+        "select telegram_group_id from library_groups where school_id=?",
+        (school_id,))
+    linked_ids = {group["telegram_group_id"] for group in linked_groups}
+    targets = linked_ids if group_ids is None else set(group_ids)
+    if not targets or not targets.issubset(linked_ids):
+        raise ValueError("Yangilik uchun ulangan guruhlarni tanlang")
+    now = int(time.time())
+    status = "scheduled" if scheduled_at and scheduled_at > now else "queued"
+    with pool.connection() as conn:
+        with conn.transaction():
+            announcement = conn.execute(
+                _sql(
+                    "insert into news_announcements(school_id,librarian_id,message,"
+                    "photo_path,scheduled_at,status,created,updated) "
+                    "values(?,?,?,?,?,?,?,?) returning id"),
+                (school_id, librarian_id, message, photo_path, scheduled_at,
+                 status, now, now),
+            ).fetchone()
+            conn.executemany(
+                _sql(
+                    "insert into news_announcement_groups(announcement_id,group_id) "
+                    "values(?,?)"),
+                [(announcement["id"], group_id) for group_id in sorted(targets)],
+            )
+    return announcement["id"], len(targets)
+
+async def deliver_news_announcement(announcement_id):
+    now = int(time.time())
+    announcement = one(
+        "update news_announcements set status='sending', updated=? "
+        "where id=? and status in ('queued','scheduled') returning *",
+        (now, announcement_id))
+    if not announcement:
+        current = one(
+            "select status from news_announcements where id=?",
+            (announcement_id,))
+        groups = rows(
+            "select group_id from news_announcement_groups where announcement_id=?",
+            (announcement_id,))
+        return 0, len(groups), current["status"] if current else "missing"
+    groups = rows(
+        "select group_id from news_announcement_groups "
+        "where announcement_id=? and status='pending' order by group_id",
+        (announcement_id,))
+    for group in groups:
+        delivered = await send_tracked_notification(
+            announcement["school_id"], group["group_id"],
+            announcement["message"], "news_announcement",
+            photo_path=announcement.get("photo_path"),
+            news_announcement_id=announcement_id)
+        q(
+            "update news_announcement_groups set status=? "
+            "where announcement_id=? and group_id=?",
+            ("sent" if delivered else "failed", announcement_id, group["group_id"]))
+        if delivered:
+            sent_at = int(time.time())
+            q(
+                "update telegram_notifications set status='sent', last_error='', "
+                "updated=?, sent_at=? where news_announcement_id=? "
+                "and recipient_tg=? and status='failed'",
+                (sent_at, sent_at, announcement_id, group["group_id"]))
+    return refresh_news_announcement_status(announcement_id)
+
+def refresh_news_announcement_status(announcement_id):
+    totals = one(
+        "select count(*) total, "
+        "count(*) filter (where status='sent') sent from "
+        "news_announcement_groups where announcement_id=?",
+        (announcement_id,))
+    sent, total = totals["sent"], totals["total"]
+    status = "sent" if sent == total else "partial" if sent else "failed"
+    finished_at = int(time.time())
+    q(
+        "update news_announcements set status=?, updated=?, sent_at=? where id=?",
+        (status, finished_at, finished_at if sent else None, announcement_id))
+    return sent, total, status
+
+async def dispatch_scheduled_news():
+    now = int(time.time())
+    q(
+        "update news_announcements set status=case when scheduled_at is null "
+        "then 'queued' else 'scheduled' end, updated=? "
+        "where status='sending' and updated<=?",
+        (now, now - 300))
+    due = rows(
+        "select id from news_announcements where "
+        "(status='queued' and updated<=?) or "
+        "(status='scheduled' and scheduled_at<=?) "
+        "order by coalesce(scheduled_at, created) limit 20",
+        (now - 30, now))
+    for announcement in due:
+        await deliver_news_announcement(announcement["id"])
+
+async def news_scheduler():
+    while True:
+        try:
+            await dispatch_scheduled_news()
+        except Exception:
+            log.exception("Rejalashtirilgan yangiliklarni yuborishda xato")
+        await asyncio.sleep(15)
+
 async def show_librarian_menu(m: Message):
     tg_id = actor_id(m)
     await m.answer(text(tg_id, "librarian_menu"), reply_markup=kb([
         [InlineKeyboardButton(text=text(tg_id, "add_book_button"), callback_data="librarian:addbook")],
+        [InlineKeyboardButton(text=text(tg_id, "add_news_button"), callback_data="librarian:news")],
     ]))
     await m.answer(
         text(tg_id, "quick_menu_hint"),
@@ -753,12 +928,35 @@ async def publish_book(book, group_ids=None):
             f"🏫 {safe_school}\n\n"
             "📲 Bot orqali oldindan band qiling / Бронируйте в боте / Reserve in the bot"
         )
+        cover_path = None
+        cover_url = book.get("cover_url") or ""
+        if cover_url.startswith("/static/uploads/"):
+            candidate = Path("static") / "uploads" / Path(cover_url).name
+            if candidate.is_file():
+                cover_path = str(candidate)
+        if cover_path:
+            description = (book.get("description") or "").strip()
+            message = (
+                "📚 YANGI KITOB KUTUBXONADA!\n"
+                f"📖 {book['title'][:120]}\n"
+                f"✍️ Muallif: {(book.get('author') or '—')[:60]}\n"
+                f"🎭 Janr: {(book.get('genre') or '—')[:40]}\n"
+                f"📦 Mavjud: {available}/{book['total']} nusxa\n"
+                f"📄 PDF: {'mavjud' if book.get('pdf_url') else 'mavjud emas'}\n"
+                f"{'📝 ' + description[:80] + ('…' if len(description) > 80 else '') + chr(10) if description else ''}"
+                f"🏫 {school['name'][:50]}\n"
+                "📲 Band qilish uchun pastdagi tugmani bosing"
+            )
+            parse_mode = None
+        else:
+            parse_mode = "HTML"
         sent = 0
         for group in groups:
             delivered = await send_tracked_notification(
                 book["school_id"], group["telegram_group_id"], message,
-                "book_announcement", parse_mode="HTML",
-                button_text="📲 Band qilish / Бронь / Reserve", button_url=link)
+                "book_announcement", parse_mode=parse_mode,
+                button_text="📲 Band qilish / Бронь / Reserve", button_url=link,
+                photo_path=cover_path)
             if delivered:
                 sent += 1
         return sent == len(groups)
@@ -872,6 +1070,8 @@ async def begin_add_book(m: Message, tg_id: int | None = None):
         return await m.answer(text(m.from_user.id, "use_private"))
     if tg_id is None:
         tg_id = actor_id(m)
+    if one("select 1 from librarian_news_drafts where tg_id=?", (tg_id,)):
+        return await m.answer(text(tg_id, "draft_active"))
     librarian = one("select id, school_id from librarians where telegram_tg_id=?",
                     (tg_id,))
     if not librarian:
@@ -885,21 +1085,123 @@ async def begin_add_book(m: Message, tg_id: int | None = None):
         (tg_id, librarian["id"], librarian["school_id"]))
     await m.answer(text(tg_id, "book_title"))
 
+async def begin_news(m: Message, tg_id: int | None = None):
+    if m.chat.type != "private":
+        return await m.answer(text(m.from_user.id, "use_private"))
+    if tg_id is None:
+        tg_id = actor_id(m)
+    librarian = one("select id, school_id from librarians where telegram_tg_id=?",
+                    (tg_id,))
+    if not librarian:
+        return await m.answer(text(tg_id, "no_libraries"))
+    if one("select 1 from librarian_book_drafts where tg_id=?", (tg_id,)):
+        return await m.answer(text(tg_id, "draft_active"))
+    if not one("select 1 from library_groups where school_id=? limit 1",
+               (librarian["school_id"],)):
+        return await m.answer(text(tg_id, "news_no_groups"))
+    q(
+        "insert into librarian_news_drafts(tg_id,librarian_id,school_id,current_step) "
+        "values(?,?,?,'message') on conflict(tg_id) do update set "
+        "librarian_id=excluded.librarian_id, school_id=excluded.school_id, "
+        "current_step='message', message=null, image_path=null",
+        (tg_id, librarian["id"], librarian["school_id"]))
+    await m.answer(text(tg_id, "news_command"))
+
+def news_preview_keyboard(tg_id):
+    return kb([[
+        InlineKeyboardButton(
+            text=text(tg_id, "news_publish"), callback_data="news:publish"),
+        InlineKeyboardButton(
+            text=text(tg_id, "news_cancel"), callback_data="news:cancel"),
+    ]])
+
+async def finish_news_draft(m: Message, tg_id: int, school_id: int,
+                            message: str, photo_path: str | None):
+    q(
+        "update librarian_news_drafts set current_step='confirm', message=?, "
+        "image_path=? where tg_id=? and school_id=?",
+        (message, photo_path, tg_id, school_id))
+    await m.answer(text(tg_id, "news_preview"))
+    if photo_path:
+        await m.answer_photo(
+            FSInputFile(photo_path), caption=message,
+            reply_markup=news_preview_keyboard(tg_id))
+    else:
+        await m.answer(message, reply_markup=news_preview_keyboard(tg_id))
+
+@dp.callback_query(F.data == "news:publish")
+async def confirm_news_publish(c: CallbackQuery):
+    tg_id = c.from_user.id
+    draft = one(
+        "select * from librarian_news_drafts where tg_id=? and current_step='confirm'",
+        (tg_id,))
+    if not draft:
+        await c.answer(text(tg_id, "draft_cancelled"), show_alert=True)
+        return
+    librarian = one(
+        "select id, school_id from librarians where telegram_tg_id=?",
+        (tg_id,))
+    if (not librarian or librarian["id"] != draft["librarian_id"]
+            or librarian["school_id"] != draft["school_id"]):
+        q("delete from librarian_news_drafts where tg_id=?", (tg_id,))
+        await c.answer(text(tg_id, "no_libraries"), show_alert=True)
+        return
+    if not one(
+            "select 1 from library_groups where school_id=? limit 1",
+            (draft["school_id"],)):
+        q("delete from librarian_news_drafts where tg_id=?", (tg_id,))
+        await c.answer(text(tg_id, "news_no_groups"), show_alert=True)
+        return
+    announcement_id, _ = create_news_announcement(
+        draft["school_id"], draft["librarian_id"], draft["message"],
+        draft.get("image_path"), None, None)
+    q("delete from librarian_news_drafts where tg_id=?", (tg_id,))
+    await c.answer()
+    if c.message:
+        await c.message.edit_reply_markup(reply_markup=None)
+    sent, total, status = await deliver_news_announcement(announcement_id)
+    result_key = "news_sent" if status == "sent" else "news_partial"
+    if c.message:
+        await c.message.answer(
+            text(tg_id, result_key, sent=sent, total=total))
+        await show_librarian_menu(c.message)
+
+@dp.callback_query(F.data == "news:cancel")
+async def cancel_news_publish(c: CallbackQuery):
+    q(
+        "delete from librarian_news_drafts where tg_id=? and current_step='confirm'",
+        (c.from_user.id,))
+    await c.answer()
+    if c.message:
+        await c.message.edit_reply_markup(reply_markup=None)
+        await c.message.answer(text(c.from_user.id, "draft_cancelled"))
+        await show_librarian_menu(c.message)
+
 @dp.message(Command("addbook"))
 async def add_book_command(m: Message):
-        await begin_add_book(m)
+    await begin_add_book(m)
+
+@dp.message(Command("news"))
+async def news_command(m: Message):
+    await begin_news(m)
 
 @dp.message(Command("cancel"))
 async def cancel_book_draft(m: Message):
     if m.chat.type != "private":
         return await m.answer(text(m.from_user.id, "use_private"))
     q("delete from librarian_book_drafts where tg_id=?", (m.from_user.id,))
+    q("delete from librarian_news_drafts where tg_id=?", (m.from_user.id,))
     await m.answer(text(m.from_user.id, "draft_cancelled"))
 
 @dp.callback_query(F.data == "librarian:addbook")
 async def add_book_button(c: CallbackQuery):
     await c.answer()
     await begin_add_book(c.message, c.from_user.id)
+
+@dp.callback_query(F.data == "librarian:news")
+async def add_news_button(c: CallbackQuery):
+    await c.answer()
+    await begin_news(c.message, c.from_user.id)
 
 def language_keyboard():
     return kb([
@@ -1159,6 +1461,70 @@ async def reserve_book_details(c: CallbackQuery):
         return await c.message.answer(text(c.from_user.id, "bad_book"))
     await ask_days(c.message, c.from_user.id, int(book_id))
 
+async def save_telegram_photo(m: Message) -> Path:
+    if not m.photo:
+        raise ValueError("Telegram xabarida rasm yo'q")
+    photo = m.photo[-1]
+    if photo.file_size and photo.file_size > 2_500_000:
+        raise ValueError("Rasm 2.5 MB dan kichik bo'lishi kerak")
+    directory = Path("static") / "uploads"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{uuid.uuid4().hex}.jpg"
+    try:
+        await m.bot.download(photo, destination=path)
+        content = path.read_bytes()
+        if len(content) > 2_500_000 or not content.startswith(b"\xff\xd8\xff"):
+            path.unlink(missing_ok=True)
+            raise ValueError("Telegram rasmi noto'g'ri yoki juda katta")
+    except ValueError:
+        raise
+    except Exception:
+        path.unlink(missing_ok=True)
+        log.exception("Telegram rasmi saqlanmadi (tg_id=%s)", m.from_user.id)
+        raise
+    return path
+
+@dp.message(F.photo)
+async def got_librarian_photo(m: Message):
+    if m.chat.type != "private":
+        return
+    news_draft = one(
+        "select * from librarian_news_drafts where tg_id=?",
+        (m.from_user.id,))
+    if news_draft and news_draft["current_step"] == "photo":
+        if len(news_draft["message"].encode("utf-16-le")) // 2 > 1024:
+            q(
+                "update librarian_news_drafts set current_step='message', message=null "
+                "where tg_id=?",
+                (m.from_user.id,))
+            return await m.answer(text(m.from_user.id, "news_message_error"))
+        try:
+            path = await save_telegram_photo(m)
+        except ValueError:
+            return await m.answer(text(m.from_user.id, "news_photo_error"))
+        except Exception:
+            return await m.answer(text(m.from_user.id, "news_photo_error"))
+        return await finish_news_draft(
+            m, m.from_user.id, news_draft["school_id"],
+            news_draft["message"], str(path))
+    if news_draft and news_draft["current_step"] == "confirm":
+        return await m.answer(text(m.from_user.id, "news_preview_pending"))
+    book_draft = one(
+        "select * from librarian_book_drafts where tg_id=?",
+        (m.from_user.id,))
+    if book_draft and book_draft["current_step"] == "cover":
+        try:
+            path = await save_telegram_photo(m)
+        except ValueError:
+            return await m.answer(text(m.from_user.id, "book_cover_error"))
+        except Exception:
+            return await m.answer(text(m.from_user.id, "book_cover_error"))
+        q(
+            "update librarian_book_drafts set cover_url=?, current_step='pdf' "
+            "where tg_id=?",
+            (f"/static/uploads/{path.name}", m.from_user.id))
+        return await m.answer(text(m.from_user.id, "book_pdf"))
+
 @dp.message(F.document)
 async def got_book_pdf(m: Message):
     if m.chat.type != "private" or not m.document:
@@ -1191,6 +1557,28 @@ async def got_book_pdf(m: Message):
 
 @dp.message(F.text & ~F.text.startswith("/"))
 async def got_text(m: Message):
+    if m.chat.type == "private":
+        news_draft = one(
+            "select * from librarian_news_drafts where tg_id=?",
+            (m.from_user.id,))
+        if news_draft:
+            value = (m.text or "").strip()
+            if news_draft["current_step"] == "message":
+                if not value or len(value.encode("utf-16-le")) // 2 > 4096:
+                    return await m.answer(text(m.from_user.id, "news_message_error"))
+                q(
+                    "update librarian_news_drafts set message=?, current_step='photo' "
+                    "where tg_id=?",
+                    (value, m.from_user.id))
+                return await m.answer(text(m.from_user.id, "news_photo"))
+            if news_draft["current_step"] == "photo":
+                if value not in ("-", "—"):
+                    return await m.answer(text(m.from_user.id, "news_photo"))
+                return await finish_news_draft(
+                    m, m.from_user.id, news_draft["school_id"],
+                    news_draft["message"], None)
+            if news_draft["current_step"] == "confirm":
+                return await m.answer(text(m.from_user.id, "news_preview_pending"))
     code = (m.text or "").strip().upper()
     if (m.chat.type == "private" and len(code) == 16
             and all(char in "0123456789ABCDEF" for char in code)):
@@ -1398,7 +1786,10 @@ async def expirer():
 # ---------- Veb sayt API ----------
 @asynccontextmanager
 async def lifespan(app):
-    tasks = [asyncio.create_task(expirer())]
+    tasks = [
+        asyncio.create_task(expirer()),
+        asyncio.create_task(news_scheduler()),
+    ]
     if bot:
         tasks.append(asyncio.create_task(dp.start_polling(bot)))
     else:
@@ -1424,14 +1815,17 @@ class BookIn(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int = 1
     description: str = ""; cover_url: str = ""; barcode: str = ""; pdf_url: str = ""
 
+class NewsIn(BaseModel):
+    message: str
+    image_url: str = ""
+    group_ids: list[int] | None = None
+    scheduled_at: str | None = None
+
 class BookUpdate(BaseModel):
     title: str; author: str = ""; genre: str = ""; total: int
     description: str = ""; cover_url: str = ""; barcode: str = ""; pdf_url: str = ""
 
 class CoverUpload(BaseModel):
-    data_url: str
-
-class PdfUpload(BaseModel):
     data_url: str
 
 def store_cover(data_url: str) -> str:
@@ -1459,15 +1853,10 @@ def store_cover(data_url: str) -> str:
     (directory / name).write_bytes(image)
     return f"/static/uploads/{name}"
 
-def store_pdf(data_url: str) -> str:
-    try:
-        header, encoded = data_url.split(",", 1)
-        content = base64.b64decode(encoded, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise HTTPException(400, "PDF fayli noto'g'ri") from exc
+def store_pdf(content: bytes) -> str:
     if len(content) > 20_000_000:
         raise HTTPException(413, "PDF fayl 20 MB dan kichik bo'lishi kerak")
-    if header.lower() != "data:application/pdf;base64" or not content.startswith(b"%PDF-"):
+    if not content.startswith(b"%PDF-"):
         raise HTTPException(400, "Faqat to'g'ri PDF fayl qabul qilinadi")
     name = f"{uuid.uuid4().hex}.pdf"
     directory = Path("static") / "uploads"
@@ -1491,10 +1880,11 @@ def upload_book_cover(d: CoverUpload, u=Depends(me)):
     return {"cover_url": store_cover(d.data_url)}
 
 @app.post("/api/book-pdfs")
-def upload_book_pdf(d: PdfUpload, u=Depends(me)):
-    if len(d.data_url) > 27_000_000:
+async def upload_book_pdf(file: UploadFile = File(...), u=Depends(me)):
+    content = await file.read(20_000_001)
+    if len(content) > 20_000_000:
         raise HTTPException(413, "PDF fayl 20 MB dan kichik bo'lishi kerak")
-    return {"pdf_url": store_pdf(d.data_url)}
+    return {"pdf_url": store_pdf(content)}
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def index():
@@ -1517,7 +1907,8 @@ def reset_database(
         raise HTTPException(400, "Tasdiqlash iborasi noto'g'ri")
 
     tables = (
-        "telegram_notifications", "library_groups", "librarian_book_drafts",
+        "telegram_notifications", "news_announcement_groups", "news_announcements",
+        "library_groups", "librarian_news_drafts", "librarian_book_drafts",
         "library_codes", "parent_codes", "parent_children", "res", "pupils",
         "students", "books", "bot_users", "librarians", "schools",
     )
@@ -1593,7 +1984,7 @@ async def retry_telegram_notification(notification_id: int, u=Depends(me)):
         await deliver_telegram_message(
             notification["recipient_tg"], notification["message"],
             notification["parse_mode"], notification["button_text"],
-            notification["button_url"])
+            notification["button_url"], notification.get("photo_path"))
     except Exception as e:
         q(
             "update telegram_notifications set status='failed', last_error=?, "
@@ -1606,6 +1997,13 @@ async def retry_telegram_notification(notification_id: int, u=Depends(me)):
         "update telegram_notifications set status='sent', last_error='', "
         "updated=?, sent_at=? where id=? and school_id=?",
         (int(time.time()), int(time.time()), notification_id, u["school_id"]))
+    announcement_id = notification.get("news_announcement_id")
+    if announcement_id:
+        q(
+            "update news_announcement_groups set status='sent' "
+            "where announcement_id=? and group_id=?",
+            (announcement_id, notification["recipient_tg"]))
+        refresh_news_announcement_status(announcement_id)
     return {"ok": True, "status": "sent"}
 
 @app.post("/api/telegram/access-code")
@@ -1745,6 +2143,135 @@ async def add_book(d: BookIn, u=Depends(me)):
         (u["school_id"], title, author, genre, d.total, description, cover_url, barcode, pdf_url))
     announced = await publish_book(book)
     return {"ok": True, "announced": announced}
+
+@app.post("/api/news")
+async def publish_news(d: NewsIn, u=Depends(me)):
+    message = d.message.strip()
+    image_url = d.image_url.strip()
+    if not message:
+        raise HTTPException(400, "Yangilik matnini kiriting")
+    max_length = 1024 if image_url else 4096
+    if len(message.encode("utf-16-le")) // 2 > max_length:
+        raise HTTPException(
+            400, f"Xabar {'rasm bilan' if image_url else ''} {max_length} belgidan oshmasin")
+    if image_url:
+        if not image_url.startswith("/static/uploads/"):
+            raise HTTPException(400, "Yangilik rasmi noto'g'ri")
+        image_path = Path("static") / "uploads" / Path(image_url).name
+        if not image_path.is_file():
+            raise HTTPException(400, "Yangilik rasmi topilmadi")
+        photo_path = str(image_path)
+    else:
+        photo_path = None
+    if not bot:
+        raise HTTPException(503, "Telegram bot sozlanmagan")
+    linked_groups = rows(
+        "select telegram_group_id from library_groups where school_id=?",
+        (u["school_id"],))
+    linked_ids = {group["telegram_group_id"] for group in linked_groups}
+    if not linked_ids:
+        raise HTTPException(400, "Avval Telegram guruhini ulang")
+    if d.group_ids is None:
+        group_ids = sorted(linked_ids)
+    else:
+        group_ids = list(dict.fromkeys(d.group_ids))
+        if not group_ids or not set(group_ids).issubset(linked_ids):
+            raise HTTPException(400, "Faqat ulangan guruhlarni tanlang")
+    scheduled_at = None
+    if d.scheduled_at:
+        try:
+            local_time = datetime.fromisoformat(d.scheduled_at)
+        except ValueError as exc:
+            raise HTTPException(400, "Rejalashtirilgan vaqt noto'g'ri") from exc
+        if local_time.tzinfo is None:
+            local_time = local_time.replace(tzinfo=TZ)
+        scheduled_at = int(local_time.timestamp())
+        if scheduled_at <= int(time.time()):
+            raise HTTPException(400, "Rejalashtirilgan vaqt kelajakda bo'lishi kerak")
+    announcement_id, total = create_news_announcement(
+        u["school_id"], u["id"], message, photo_path, group_ids, scheduled_at)
+    if scheduled_at:
+        return {
+            "id": announcement_id,
+            "status": "scheduled",
+            "scheduled_at": scheduled_at,
+            "total": total,
+        }
+    sent, total, status = await deliver_news_announcement(announcement_id)
+    return {"id": announcement_id, "sent": sent, "total": total, "status": status}
+
+@app.get("/api/news")
+def get_news_history(u=Depends(me)):
+    history = rows(
+        "select n.id, n.message, n.photo_path, n.scheduled_at, n.status, "
+        "n.created, n.sent_at, count(g.group_id) total, "
+        "count(*) filter (where g.status='sent') sent from news_announcements n "
+        "left join news_announcement_groups g on g.announcement_id=n.id "
+        "where n.school_id=? group by n.id order by n.created desc limit 100",
+        (u["school_id"],))
+    for item in history:
+        item["image_url"] = (
+            f"/static/uploads/{Path(item['photo_path']).name}"
+            if item.get("photo_path") else "")
+    return history
+
+@app.post("/api/news/{announcement_id}/resend")
+async def resend_news(announcement_id: int, u=Depends(me)):
+    if one(
+            "select 1 from telegram_notifications where news_announcement_id=? "
+            "and status='sending' limit 1", (announcement_id,)):
+        raise HTTPException(409, "Yangilik xabari qayta yuborilmoqda")
+    claimed = one(
+        "update news_announcements set status='queued', scheduled_at=null, "
+        "updated=? where id=? and school_id=? and status<>'sending' returning id",
+        (int(time.time()), announcement_id, u["school_id"]))
+    if not claimed:
+        exists = one(
+            "select 1 from news_announcements where id=? and school_id=?",
+            (announcement_id, u["school_id"]))
+        if not exists:
+            raise HTTPException(404, "Yangilik topilmadi")
+        raise HTTPException(409, "Yangilik hozir yuborilmoqda")
+    q(
+        "update news_announcement_groups set status='pending' "
+        "where announcement_id=?",
+        (announcement_id,))
+    sent, total, status = await deliver_news_announcement(announcement_id)
+    return {"id": announcement_id, "sent": sent, "total": total, "status": status}
+
+@app.delete("/api/news/{announcement_id}")
+def delete_news(announcement_id: int, u=Depends(me)):
+    with pool.connection() as conn:
+        with conn.transaction():
+            announcement = conn.execute(
+                _sql(
+                    "select id, status from news_announcements "
+                    "where id=? and school_id=? for update"),
+                (announcement_id, u["school_id"]),
+            ).fetchone()
+            if not announcement:
+                raise HTTPException(404, "Yangilik topilmadi")
+            if announcement["status"] == "sending":
+                raise HTTPException(
+                    409, "Yuborilayotgan yangilikni hozir o'chirib bo'lmaydi")
+            notifications = conn.execute(
+                _sql(
+                    "select status from telegram_notifications "
+                    "where news_announcement_id=? for update"),
+                (announcement_id,),
+            ).fetchall()
+            if any(item["status"] == "sending" for item in notifications):
+                raise HTTPException(409, "Yangilik xabari qayta yuborilmoqda")
+            conn.execute(
+                _sql("delete from telegram_notifications where news_announcement_id=?"),
+                (announcement_id,))
+            conn.execute(
+                _sql("delete from news_announcement_groups where announcement_id=?"),
+                (announcement_id,))
+            conn.execute(
+                _sql("delete from news_announcements where id=? and school_id=?"),
+                (announcement_id, u["school_id"]))
+    return {"ok": True}
 
 @app.get("/api/reservations")
 def get_res(u=Depends(me)):

@@ -1,5 +1,6 @@
 aiogram
 fastapi
+python-multipart
 uvicorn
 python-dotenv
 pydantic
